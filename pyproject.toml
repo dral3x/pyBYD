@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
@@ -38,7 +38,10 @@ dev = [
 ]
 
 [tool.hatch.version]
-path = "src/pybyd/_version.py"
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/pybyd/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pybyd"]

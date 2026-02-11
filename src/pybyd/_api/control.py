@@ -1,5 +1,13 @@
 """Remote control endpoints.
 
+.. warning::
+    Remote control is **unverified / non-functional** as of 2025-07.
+    The ``/control/remoteControl`` endpoint returns error code 1007
+    ("Service error") for every tested command and account.  The
+    payload structure here matches TA2k's ioBroker.byd adapter, but
+    the server rejects all requests.  This module is retained so the
+    wire format is ready once the root cause is identified.
+
 Endpoints:
   - /control/remoteControl (trigger)
   - /control/remoteControlResult (poll)
@@ -43,19 +51,39 @@ def _build_control_inner(
     vin: str,
     command: RemoteCommand,
     now_ms: int,
+    *,
+    control_params: dict[str, Any] | None = None,
+    command_pwd: str | None = None,
     request_serial: str | None = None,
-) -> dict[str, str]:
-    """Build the inner payload for remote control endpoints."""
-    inner: dict[str, str] = {
+) -> dict[str, Any]:
+    """Build the inner payload for remote control endpoints.
+
+    Parameters
+    ----------
+    control_params
+        Optional command parameters. Serialised to a JSON string as
+        ``controlParamsMap`` in the payload.
+    command_pwd
+        Optional control password (PIN) sent as ``commandPwd``.
+    """
+    inner: dict[str, Any] = {
         "deviceType": config.device.device_type,
         "imeiMD5": config.device.imei_md5,
-        "instructionCode": command.value,
+        "instructionCode": None,
         "networkType": config.device.network_type,
         "random": secrets.token_hex(16).upper(),
         "timeStamp": str(now_ms),
         "version": config.app_inner_version,
         "vin": vin,
     }
+    # commandType is added alongside instructionCode (which stays null)
+    inner["commandType"] = command.value
+    if control_params is not None:
+        inner["controlParamsMap"] = json.dumps(
+            control_params, separators=(",", ":"),
+        )
+    if command_pwd is not None:
+        inner["commandPwd"] = command_pwd
     if request_serial:
         inner["requestSerial"] = request_serial
     return inner
@@ -97,11 +125,19 @@ async def _fetch_control_endpoint(
     transport: SecureTransport,
     vin: str,
     command: RemoteCommand,
+    *,
+    control_params: dict[str, Any] | None = None,
+    command_pwd: str | None = None,
     request_serial: str | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     """Fetch a single control endpoint, returning (result_dict, next_serial)."""
     now_ms = int(time.time() * 1000)
-    inner = _build_control_inner(config, vin, command, now_ms, request_serial)
+    inner = _build_control_inner(
+        config, vin, command, now_ms,
+        control_params=control_params,
+        command_pwd=command_pwd,
+        request_serial=request_serial,
+    )
     outer, content_key = build_token_outer_envelope(config, session, inner, now_ms)
 
     response = await transport.post_secure(endpoint, outer)
@@ -125,6 +161,8 @@ async def poll_remote_control(
     vin: str,
     command: RemoteCommand,
     *,
+    control_params: dict[str, Any] | None = None,
+    command_pwd: str | None = None,
     poll_attempts: int = 10,
     poll_interval: float = 1.5,
 ) -> RemoteControlResult:
@@ -142,6 +180,10 @@ async def poll_remote_control(
         Vehicle Identification Number.
     command : RemoteCommand
         The remote command to send.
+    control_params : dict or None
+        Command-specific parameters (serialised as ``controlParamsMap``).
+    command_pwd : str or None
+        Optional control password (PIN).
     poll_attempts : int
         Maximum number of result poll attempts.
     poll_interval : float
@@ -159,7 +201,7 @@ async def poll_remote_control(
     BydApiError
         If the API returns an error.
     """
-    # Phase 1: Trigger request
+    # Phase 1: Trigger request (with control params)
     result, serial = await _fetch_control_endpoint(
         "/control/remoteControl",
         config,
@@ -167,6 +209,8 @@ async def poll_remote_control(
         transport,
         vin,
         command,
+        control_params=control_params,
+        command_pwd=command_pwd,
     )
     _logger.debug(
         "Remote control %s: controlState=%s serial=%s",
@@ -202,7 +246,7 @@ async def poll_remote_control(
                 transport,
                 vin,
                 command,
-                serial,
+                request_serial=serial,
             )
             _logger.debug(
                 "Remote control %s poll attempt=%d controlState=%s serial=%s",

@@ -27,5 +27,8 @@ def build_sign_string(fields: dict[str, str], password: str) -> str:
         The concatenated sign string.
     """
     keys = sorted(fields.keys())
-    joined = "&".join(f"{key}={fields[key]}" for key in keys)
+    joined = "&".join(
+        f"{key}={'null' if fields[key] is None else fields[key]}"
+        for key in keys
+    )
     return f"{joined}&password={password}"

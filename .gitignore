@@ -21,6 +21,9 @@ htmlcov/
 # Type checking
 .mypy_cache/
 
+# Auto-generated version file (hatch-vcs)
+src/pybyd/_version.py
+
 # Linting
 .ruff_cache/
 

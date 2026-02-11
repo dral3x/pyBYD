@@ -1,6 +1,8 @@
 """pybyd - Async Python client for BYD vehicle telemetry API."""
 
-from pybyd._version import __version__
+from importlib.metadata import version
+
+__version__ = version("pybyd")
 from pybyd.client import BydClient
 from pybyd.config import BydConfig, DeviceProfile
 from pybyd.exceptions import (

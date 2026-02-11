@@ -8,20 +8,28 @@ from typing import Any
 
 
 class RemoteCommand(enum.StrEnum):
-    """Remote control instruction codes.
+    """Remote control ``commandType`` values.
 
-    Each value corresponds to the ``instructionCode`` string sent
-    to the BYD API (per PROTOCOL.md).
+    Each value corresponds to the ``commandType`` string sent to
+    ``/control/remoteControl`` on the BYD API, as confirmed by
+    Niek (BYD-re) and TA2k's APK analysis.
+
+    .. warning::
+        Remote control is **unverified** — the API returns error 1007
+        for all commands as of 2025-07.  These enum values are kept
+        for reference and forward-compatibility.
     """
 
-    LOCK = "101"
-    UNLOCK = "102"
-    START_CLIMATE = "111"
-    STOP_CLIMATE = "112"
-    OPEN_TRUNK = "121"
-    CLOSE_WINDOWS = "141"
-    FLASH_LIGHTS = "301"
-    HORN = "302"
+    LOCK = "LOCKDOOR"
+    UNLOCK = "OPENDOOR"
+    START_CLIMATE = "OPENAIR"
+    STOP_CLIMATE = "CLOSEAIR"
+    SCHEDULE_CLIMATE = "BOOKINGAIR"
+    FIND_CAR = "FINDCAR"
+    FLASH_LIGHTS = "FLASHLIGHTNOWHISTLE"
+    CLOSE_WINDOWS = "CLOSEWINDOW"
+    SEAT_CLIMATE = "VENTILATIONHEATING"
+    BATTERY_HEAT = "BATTERYHEAT"
 
 
 class ControlState(enum.IntEnum):

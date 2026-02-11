@@ -270,10 +270,19 @@ class BydClient:
         vin: str,
         command: RemoteCommand,
         *,
+        control_params: dict[str, Any] | None = None,
+        command_pwd: str | None = None,
         poll_attempts: int = 10,
         poll_interval: float = 1.5,
     ) -> RemoteControlResult:
         """Send a remote control command to a vehicle.
+
+        .. warning::
+            **Non-functional as of 2025-07.**  The ``/control/remoteControl``
+            endpoint returns error code 1007 for every tested command and
+            account.  The payload format matches TA2k's ioBroker.byd adapter
+            but the server rejects all requests.  This method is retained so
+            the wire format is ready once the root cause is identified.
 
         Triggers the command and polls until the vehicle confirms
         success/failure or the poll limit is reached.
@@ -284,6 +293,11 @@ class BydClient:
             Vehicle Identification Number.
         command : RemoteCommand
             The remote command to send.
+        control_params : dict or None
+            Command-specific parameters (serialised as
+            ``controlParamsMap``).
+        command_pwd : str or None
+            Optional control password (PIN).
         poll_attempts : int
             Maximum number of result poll attempts (default 10).
         poll_interval : float
@@ -311,105 +325,269 @@ class BydClient:
             transport,
             vin,
             command,
+            control_params=control_params,
+            command_pwd=command_pwd,
             poll_attempts=poll_attempts,
             poll_interval=poll_interval,
         )
 
-    async def lock(self, vin: str, **kwargs: Any) -> RemoteControlResult:
+    # ── Simple commands (no controlParamsMap) ────────────────
+
+    async def lock(
+        self,
+        vin: str,
+        *,
+        poll_attempts: int = 10,
+        poll_interval: float = 1.5,
+        command_pwd: str | None = None,
+    ) -> RemoteControlResult:
         """Lock the vehicle doors.
 
-        Parameters
-        ----------
-        vin : str
-            Vehicle Identification Number.
-        **kwargs
-            Forwarded to :meth:`remote_control`.
+        .. warning:: Non-functional — see :meth:`remote_control`.
         """
-        return await self.remote_control(vin, RemoteCommand.LOCK, **kwargs)
+        return await self.remote_control(
+            vin, RemoteCommand.LOCK,
+            command_pwd=command_pwd,
+            poll_attempts=poll_attempts,
+            poll_interval=poll_interval,
+        )
 
-    async def unlock(self, vin: str, **kwargs: Any) -> RemoteControlResult:
+    async def unlock(
+        self,
+        vin: str,
+        *,
+        poll_attempts: int = 10,
+        poll_interval: float = 1.5,
+        command_pwd: str | None = None,
+    ) -> RemoteControlResult:
         """Unlock the vehicle doors.
 
-        Parameters
-        ----------
-        vin : str
-            Vehicle Identification Number.
-        **kwargs
-            Forwarded to :meth:`remote_control`.
+        .. warning:: Non-functional — see :meth:`remote_control`.
         """
-        return await self.remote_control(vin, RemoteCommand.UNLOCK, **kwargs)
+        return await self.remote_control(
+            vin, RemoteCommand.UNLOCK,
+            command_pwd=command_pwd,
+            poll_attempts=poll_attempts,
+            poll_interval=poll_interval,
+        )
 
-    async def flash_lights(self, vin: str, **kwargs: Any) -> RemoteControlResult:
-        """Flash the vehicle lights.
+    async def flash_lights(
+        self,
+        vin: str,
+        *,
+        poll_attempts: int = 10,
+        poll_interval: float = 1.5,
+    ) -> RemoteControlResult:
+        """Flash the vehicle lights (without horn).
 
-        Parameters
-        ----------
-        vin : str
-            Vehicle Identification Number.
-        **kwargs
-            Forwarded to :meth:`remote_control`.
+        .. warning:: Non-functional — see :meth:`remote_control`.
         """
-        return await self.remote_control(vin, RemoteCommand.FLASH_LIGHTS, **kwargs)
+        return await self.remote_control(
+            vin, RemoteCommand.FLASH_LIGHTS,
+            poll_attempts=poll_attempts,
+            poll_interval=poll_interval,
+        )
 
-    async def honk_horn(self, vin: str, **kwargs: Any) -> RemoteControlResult:
-        """Honk the vehicle horn.
+    async def find_car(
+        self,
+        vin: str,
+        *,
+        poll_attempts: int = 10,
+        poll_interval: float = 1.5,
+    ) -> RemoteControlResult:
+        """Flash lights and honk horn to locate the vehicle.
 
-        Parameters
-        ----------
-        vin : str
-            Vehicle Identification Number.
-        **kwargs
-            Forwarded to :meth:`remote_control`.
+        .. warning:: Non-functional — see :meth:`remote_control`.
         """
-        return await self.remote_control(vin, RemoteCommand.HORN, **kwargs)
+        return await self.remote_control(
+            vin, RemoteCommand.FIND_CAR,
+            poll_attempts=poll_attempts,
+            poll_interval=poll_interval,
+        )
 
-    async def start_climate(self, vin: str, **kwargs: Any) -> RemoteControlResult:
-        """Start climate control.
-
-        Parameters
-        ----------
-        vin : str
-            Vehicle Identification Number.
-        **kwargs
-            Forwarded to :meth:`remote_control`.
-        """
-        return await self.remote_control(vin, RemoteCommand.START_CLIMATE, **kwargs)
-
-    async def stop_climate(self, vin: str, **kwargs: Any) -> RemoteControlResult:
-        """Stop climate control.
-
-        Parameters
-        ----------
-        vin : str
-            Vehicle Identification Number.
-        **kwargs
-            Forwarded to :meth:`remote_control`.
-        """
-        return await self.remote_control(vin, RemoteCommand.STOP_CLIMATE, **kwargs)
-
-    async def open_trunk(self, vin: str, **kwargs: Any) -> RemoteControlResult:
-        """Open the trunk.
-
-        Parameters
-        ----------
-        vin : str
-            Vehicle Identification Number.
-        **kwargs
-            Forwarded to :meth:`remote_control`.
-        """
-        return await self.remote_control(vin, RemoteCommand.OPEN_TRUNK, **kwargs)
-
-    async def close_windows(self, vin: str, **kwargs: Any) -> RemoteControlResult:
+    async def close_windows(
+        self,
+        vin: str,
+        *,
+        poll_attempts: int = 10,
+        poll_interval: float = 1.5,
+    ) -> RemoteControlResult:
         """Close all windows.
 
+        .. warning:: Non-functional — see :meth:`remote_control`.
+        """
+        return await self.remote_control(
+            vin, RemoteCommand.CLOSE_WINDOWS,
+            poll_attempts=poll_attempts,
+            poll_interval=poll_interval,
+        )
+
+    # ── Climate control ──────────────────────────────────────
+
+    async def start_climate(
+        self,
+        vin: str,
+        *,
+        temperature: int = 7,
+        copilot_temperature: int | None = None,
+        cycle_mode: int = 2,
+        time_span: int = 1,
+        poll_attempts: int = 10,
+        poll_interval: float = 1.5,
+        command_pwd: str | None = None,
+    ) -> RemoteControlResult:
+        """Start climate control with temperature settings.
+
+        .. warning:: Non-functional — see :meth:`remote_control`.
+
         Parameters
         ----------
         vin : str
             Vehicle Identification Number.
-        **kwargs
-            Forwarded to :meth:`remote_control`.
+        temperature : int
+            Driver-side temperature level (1=~15 °C fast cool,
+            7=~21 °C default, 17=max heat).
+        copilot_temperature : int or None
+            Passenger-side temperature. Defaults to ``temperature``.
+        cycle_mode : int
+            Air circulation (1=internal/recirculate, 2=external/fresh).
+        time_span : int
+            Duration setting (1=default).
         """
-        return await self.remote_control(vin, RemoteCommand.CLOSE_WINDOWS, **kwargs)
+        params = {
+            "airSet": None,
+            "remoteMode": 4,
+            "timeSpan": time_span,
+            "mainSettingTemp": temperature,
+            "copilotSettingTemp": (
+                copilot_temperature if copilot_temperature is not None
+                else temperature
+            ),
+            "cycleMode": cycle_mode,
+            "airAccuracy": 1,
+            "airConditioningMode": 1,
+        }
+        return await self.remote_control(
+            vin, RemoteCommand.START_CLIMATE,
+            control_params=params,
+            command_pwd=command_pwd,
+            poll_attempts=poll_attempts,
+            poll_interval=poll_interval,
+        )
+
+    async def stop_climate(
+        self,
+        vin: str,
+        *,
+        poll_attempts: int = 10,
+        poll_interval: float = 1.5,
+        command_pwd: str | None = None,
+    ) -> RemoteControlResult:
+        """Stop climate control.
+
+        .. warning:: Non-functional — see :meth:`remote_control`.
+        """
+        params = {
+            "airSet": None,
+            "remoteMode": 4,
+            "timeSpan": 0,
+            "mainSettingTemp": 7,
+            "copilotSettingTemp": 7,
+            "cycleMode": 2,
+        }
+        return await self.remote_control(
+            vin, RemoteCommand.STOP_CLIMATE,
+            control_params=params,
+            command_pwd=command_pwd,
+            poll_attempts=poll_attempts,
+            poll_interval=poll_interval,
+        )
+
+    # ── Seat / steering wheel heating ────────────────────────
+
+    async def set_seat_climate(
+        self,
+        vin: str,
+        *,
+        main_heat: int = 0,
+        main_ventilation: int = 0,
+        copilot_heat: int = 0,
+        copilot_ventilation: int = 0,
+        lr_seat_heat: int = 0,
+        lr_seat_ventilation: int = 0,
+        rr_seat_heat: int = 0,
+        rr_seat_ventilation: int = 0,
+        lr_third_heat: int = 0,
+        lr_third_ventilation: int = 0,
+        rr_third_heat: int = 0,
+        rr_third_ventilation: int = 0,
+        steering_wheel_heat: int = 0,
+        poll_attempts: int = 10,
+        poll_interval: float = 1.5,
+        command_pwd: str | None = None,
+    ) -> RemoteControlResult:
+        """Set seat heating/ventilation and steering wheel heating.
+
+        .. warning:: Non-functional — see :meth:`remote_control`.
+
+        All heating/ventilation levels are 0=off, 1–3 for intensity.
+        Steering wheel heating is 0=off, 1=on.
+        """
+        params = {
+            "chairType": "5",
+            "remoteMode": 1,
+            "mainHeat": main_heat,
+            "mainVentilation": main_ventilation,
+            "copilotHeat": copilot_heat,
+            "copilotVentilation": copilot_ventilation,
+            "lrSeatHeatState": lr_seat_heat,
+            "lrSeatVentilationState": lr_seat_ventilation,
+            "rrSeatHeatState": rr_seat_heat,
+            "rrSeatVentilationState": rr_seat_ventilation,
+            "lrThirdHeatState": lr_third_heat,
+            "lrThirdVentilationState": lr_third_ventilation,
+            "rrThirdHeatState": rr_third_heat,
+            "rrThirdVentilationState": rr_third_ventilation,
+            "steeringWheelHeatState": steering_wheel_heat,
+        }
+        return await self.remote_control(
+            vin, RemoteCommand.SEAT_CLIMATE,
+            control_params=params,
+            command_pwd=command_pwd,
+            poll_attempts=poll_attempts,
+            poll_interval=poll_interval,
+        )
+
+    # ── Battery preheating ───────────────────────────────────
+
+    async def set_battery_heat(
+        self,
+        vin: str,
+        *,
+        on: bool = True,
+        poll_attempts: int = 10,
+        poll_interval: float = 1.5,
+        command_pwd: str | None = None,
+    ) -> RemoteControlResult:
+        """Enable or disable battery preheating.
+
+        .. warning:: Non-functional — see :meth:`remote_control`.
+
+        Parameters
+        ----------
+        on : bool
+            True to enable, False to disable.
+        """
+        params = {"batteryHeat": 1 if on else 0}
+        return await self.remote_control(
+            vin, RemoteCommand.BATTERY_HEAT,
+            control_params=params,
+            command_pwd=command_pwd,
+            poll_attempts=poll_attempts,
+            poll_interval=poll_interval,
+        )
+
+    # ── Read-only status endpoints ───────────────────────────
 
     async def get_hvac_status(self, vin: str) -> HvacStatus:
         """Fetch current HVAC / climate control status.
