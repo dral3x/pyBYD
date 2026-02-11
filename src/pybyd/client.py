@@ -138,7 +138,7 @@ class BydClient:
             sign_token=token.sign_token,
             encry_token=token.encry_token,
         )
-        _logger.info("Login succeeded for user_id=%s", token.user_id)
+        _logger.debug("Login succeeded for user_id=%s", token.user_id)
         return token
 
     async def get_vehicles(self) -> list[Vehicle]:
