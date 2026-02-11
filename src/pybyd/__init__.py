@@ -14,6 +14,7 @@ from pybyd.exceptions import (
     BydError,
     BydRateLimitError,
     BydRemoteControlError,
+    BydSessionExpiredError,
     BydTransportError,
 )
 from pybyd.models import (
@@ -49,6 +50,7 @@ __all__ = [
     "BydError",
     "BydRateLimitError",
     "BydRemoteControlError",
+    "BydSessionExpiredError",
     "BydTransportError",
     "ChargingStatus",
     "ConnectState",

@@ -57,6 +57,15 @@ class BydAuthenticationError(BydApiError):
     """Login failed or session expired."""
 
 
+class BydSessionExpiredError(BydAuthenticationError):
+    """Session token rejected by the server.
+
+    Raised when a post-login API call fails with an error code that
+    indicates the token is no longer valid (e.g. ``1005``).  The client
+    catches this internally to trigger automatic re-authentication.
+    """
+
+
 class BydRemoteControlError(BydApiError):
     """Remote control command failed (controlState=2)."""
 

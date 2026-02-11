@@ -62,6 +62,11 @@ class BydConfig:
         6-digit remote control PIN set in the BYD app. Required for
         vehicle control commands (lock, unlock, climate, etc.).
         The PIN is hashed with MD5 before sending to the API.
+    session_ttl : float
+        Session token time-to-live in seconds.  After this interval
+        the client will automatically re-authenticate on the next API
+        call.  Defaults to 12 hours.  Set to ``0`` to disable
+        automatic expiry (the session will only refresh on auth errors).
     device : DeviceProfile
         Device identity fields.
     """
@@ -78,6 +83,7 @@ class BydConfig:
     tbox_version: str = "3"
     is_auto: str = "1"
     control_pin: str | None = None
+    session_ttl: float = 12 * 3600
     device: DeviceProfile = dataclasses.field(default_factory=DeviceProfile)
 
     @classmethod
@@ -148,6 +154,11 @@ class BydConfig:
             val = env.get(env_key)
             if val is not None:
                 config_kwargs[field_name] = val
+
+        # session_ttl is numeric, handle separately
+        ttl_env = env.get("BYD_SESSION_TTL")
+        if ttl_env is not None and "session_ttl" not in overrides:
+            config_kwargs["session_ttl"] = float(ttl_env)
 
         config_kwargs.update(overrides)
 

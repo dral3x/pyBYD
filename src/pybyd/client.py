@@ -21,7 +21,7 @@ from pybyd._cache import VehicleDataCache
 from pybyd._crypto.bangcle import BangcleCodec
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
-from pybyd.exceptions import BydError
+from pybyd.exceptions import BydApiError, BydAuthenticationError, BydError
 from pybyd.models.charging import ChargingStatus
 from pybyd.models.control import RemoteCommand, RemoteControlResult
 from pybyd.models.energy import EnergyConsumption
@@ -33,6 +33,11 @@ from pybyd.models.vehicle import Vehicle
 from pybyd.session import Session
 
 _logger = logging.getLogger(__name__)
+
+#: API error codes that indicate the session token is no longer valid.
+#: When one of these is encountered the client will transparently
+#: re-authenticate and retry the request once.
+_SESSION_EXPIRED_CODES: frozenset[str] = frozenset({"1005", "1010"})
 
 
 def _validate_climate_temperature(value: int, name: str) -> int:
@@ -97,12 +102,6 @@ class BydClient:
             self._http_session = None
         self._transport = None
 
-    def _require_session(self) -> Session:
-        """Return the current session or raise if not logged in."""
-        if self._session is None:
-            raise BydError("Not logged in. Call login() first.")
-        return self._session
-
     def _require_transport(self) -> SecureTransport:
         """Return the transport or raise if not initialized."""
         if self._transport is None:
@@ -111,11 +110,15 @@ class BydClient:
 
     @property
     def is_logged_in(self) -> bool:
-        """Whether the client has an active session."""
-        return self._session is not None
+        """Whether the client has an active, non-expired session."""
+        return self._session is not None and not self._session.is_expired
 
     async def login(self) -> AuthToken:
         """Authenticate with the BYD API.
+
+        Creates a new session, replacing any existing one.  Prefer
+        :meth:`ensure_session` for normal usage — it only logs in
+        when necessary.
 
         Returns
         -------
@@ -133,13 +136,51 @@ class BydClient:
         response = await transport.post_secure("/app/account/login", outer)
         token = parse_login_response(response, self._config.password)
 
+        ttl = self._config.session_ttl if self._config.session_ttl > 0 else float("inf")
         self._session = Session(
             user_id=token.user_id,
             sign_token=token.sign_token,
             encry_token=token.encry_token,
+            ttl=ttl,
         )
         _logger.debug("Login succeeded for user_id=%s", token.user_id)
         return token
+
+    async def ensure_session(self) -> Session:
+        """Return a valid session, logging in automatically if needed.
+
+        * First call → performs login.
+        * Subsequent calls → returns the cached session.
+        * Expired session → performs a fresh login.
+
+        This is the recommended way to obtain a session for API calls.
+        All public data-fetching methods call this internally, so
+        explicit login is no longer required.
+
+        Returns
+        -------
+        Session
+            An active, non-expired session.
+
+        Raises
+        ------
+        BydAuthenticationError
+            If login fails.
+        """
+        if self._session is not None and not self._session.is_expired:
+            return self._session
+        if self._session is not None:
+            _logger.info(
+                "Session expired after %.0f s — re-authenticating",
+                self._session.age,
+            )
+        await self.login()
+        assert self._session is not None  # login() always sets this  # noqa: S101
+        return self._session
+
+    def invalidate_session(self) -> None:
+        """Discard the current session, forcing re-login on next call."""
+        self._session = None
 
     async def get_vehicles(self) -> list[Vehicle]:
         """Fetch all vehicles associated with the account.
@@ -156,12 +197,23 @@ class BydClient:
         BydError
             If not logged in.
         """
-        session = self._require_session()
+        session = await self.ensure_session()
         transport = self._require_transport()
-        now_ms = int(time.time() * 1000)
-        outer, content_key = build_list_request(self._config, session, now_ms)
-        response = await transport.post_secure("/app/account/getAllListByUserId", outer)
-        vehicles = parse_vehicle_list(response, content_key)
+        try:
+            now_ms = int(time.time() * 1000)
+            outer, content_key = build_list_request(self._config, session, now_ms)
+            response = await transport.post_secure("/app/account/getAllListByUserId", outer)
+            vehicles = parse_vehicle_list(response, content_key)
+        except BydApiError as exc:
+            if exc.code not in _SESSION_EXPIRED_CODES:
+                raise
+            _logger.debug("Session rejected (code %s) — re-authenticating", exc.code)
+            self.invalidate_session()
+            session = await self.ensure_session()
+            now_ms = int(time.time() * 1000)
+            outer, content_key = build_list_request(self._config, session, now_ms)
+            response = await transport.post_secure("/app/account/getAllListByUserId", outer)
+            vehicles = parse_vehicle_list(response, content_key)
         for vehicle in vehicles:
             if isinstance(vehicle.raw, dict) and vehicle.vin:
                 self._cache.merge_vehicle(vehicle.vin, vehicle.raw)
@@ -204,18 +256,35 @@ class BydClient:
         BydError
             If not logged in.
         """
-        session = self._require_session()
+        session = await self.ensure_session()
         transport = self._require_transport()
-        return await poll_vehicle_realtime(
-            self._config,
-            session,
-            transport,
-            vin,
-            poll_attempts=poll_attempts,
-            poll_interval=poll_interval,
-            cache=self._cache,
-            stale_after=stale_after,
-        )
+        try:
+            return await poll_vehicle_realtime(
+                self._config,
+                session,
+                transport,
+                vin,
+                poll_attempts=poll_attempts,
+                poll_interval=poll_interval,
+                cache=self._cache,
+                stale_after=stale_after,
+            )
+        except BydApiError as exc:
+            if exc.code not in _SESSION_EXPIRED_CODES:
+                raise
+            _logger.debug("Session rejected (code %s) — re-authenticating", exc.code)
+            self.invalidate_session()
+            session = await self.ensure_session()
+            return await poll_vehicle_realtime(
+                self._config,
+                session,
+                transport,
+                vin,
+                poll_attempts=poll_attempts,
+                poll_interval=poll_interval,
+                cache=self._cache,
+                stale_after=stale_after,
+            )
 
     async def get_gps_info(
         self,
@@ -254,18 +323,35 @@ class BydClient:
         BydError
             If not logged in.
         """
-        session = self._require_session()
+        session = await self.ensure_session()
         transport = self._require_transport()
-        return await poll_gps_info(
-            self._config,
-            session,
-            transport,
-            vin,
-            poll_attempts=poll_attempts,
-            poll_interval=poll_interval,
-            cache=self._cache,
-            stale_after=stale_after,
-        )
+        try:
+            return await poll_gps_info(
+                self._config,
+                session,
+                transport,
+                vin,
+                poll_attempts=poll_attempts,
+                poll_interval=poll_interval,
+                cache=self._cache,
+                stale_after=stale_after,
+            )
+        except BydApiError as exc:
+            if exc.code not in _SESSION_EXPIRED_CODES:
+                raise
+            _logger.debug("Session rejected (code %s) — re-authenticating", exc.code)
+            self.invalidate_session()
+            session = await self.ensure_session()
+            return await poll_gps_info(
+                self._config,
+                session,
+                transport,
+                vin,
+                poll_attempts=poll_attempts,
+                poll_interval=poll_interval,
+                cache=self._cache,
+                stale_after=stale_after,
+            )
 
     async def get_energy_consumption(self, vin: str) -> EnergyConsumption:
         """Fetch energy consumption data for a vehicle.
@@ -287,15 +373,29 @@ class BydClient:
         BydError
             If not logged in.
         """
-        session = self._require_session()
+        session = await self.ensure_session()
         transport = self._require_transport()
-        return await fetch_energy_consumption(
-            self._config,
-            session,
-            transport,
-            vin,
-            cache=self._cache,
-        )
+        try:
+            return await fetch_energy_consumption(
+                self._config,
+                session,
+                transport,
+                vin,
+                cache=self._cache,
+            )
+        except BydApiError as exc:
+            if exc.code not in _SESSION_EXPIRED_CODES:
+                raise
+            _logger.debug("Session rejected (code %s) — re-authenticating", exc.code)
+            self.invalidate_session()
+            session = await self.ensure_session()
+            return await fetch_energy_consumption(
+                self._config,
+                session,
+                transport,
+                vin,
+                cache=self._cache,
+            )
 
     def _resolve_command_pwd(self, command_pwd: str | None) -> str:
         """Resolve the command password (MD5-hashed control PIN).
@@ -377,25 +477,48 @@ class BydClient:
         BydError
             If not logged in.
         """
-        session = self._require_session()
+        session = await self.ensure_session()
         transport = self._require_transport()
         resolved_pwd = self._resolve_command_pwd(command_pwd)
-        return await poll_remote_control(
-            self._config,
-            session,
-            transport,
-            vin,
-            command,
-            control_params=control_params,
-            command_pwd=resolved_pwd,
-            poll_attempts=poll_attempts,
-            poll_interval=poll_interval,
-            rate_limit_retries=rate_limit_retries,
-            rate_limit_delay=rate_limit_delay,
-            command_retries=command_retries,
-            command_retry_delay=command_retry_delay,
-            debug_recorder=self._debug_recorder,
-        )
+        try:
+            return await poll_remote_control(
+                self._config,
+                session,
+                transport,
+                vin,
+                command,
+                control_params=control_params,
+                command_pwd=resolved_pwd,
+                poll_attempts=poll_attempts,
+                poll_interval=poll_interval,
+                rate_limit_retries=rate_limit_retries,
+                rate_limit_delay=rate_limit_delay,
+                command_retries=command_retries,
+                command_retry_delay=command_retry_delay,
+                debug_recorder=self._debug_recorder,
+            )
+        except BydApiError as exc:
+            if exc.code not in _SESSION_EXPIRED_CODES:
+                raise
+            _logger.debug("Session rejected (code %s) — re-authenticating", exc.code)
+            self.invalidate_session()
+            session = await self.ensure_session()
+            return await poll_remote_control(
+                self._config,
+                session,
+                transport,
+                vin,
+                command,
+                control_params=control_params,
+                command_pwd=resolved_pwd,
+                poll_attempts=poll_attempts,
+                poll_interval=poll_interval,
+                rate_limit_retries=rate_limit_retries,
+                rate_limit_delay=rate_limit_delay,
+                command_retries=command_retries,
+                command_retry_delay=command_retry_delay,
+                debug_recorder=self._debug_recorder,
+            )
 
     # ── Simple commands (no controlParamsMap) ────────────────
 
@@ -677,9 +800,17 @@ class BydClient:
         HvacStatus
             Current climate control state.
         """
-        session = self._require_session()
+        session = await self.ensure_session()
         transport = self._require_transport()
-        return await fetch_hvac_status(self._config, session, transport, vin, cache=self._cache)
+        try:
+            return await fetch_hvac_status(self._config, session, transport, vin, cache=self._cache)
+        except BydApiError as exc:
+            if exc.code not in _SESSION_EXPIRED_CODES:
+                raise
+            _logger.debug("Session rejected (code %s) — re-authenticating", exc.code)
+            self.invalidate_session()
+            session = await self.ensure_session()
+            return await fetch_hvac_status(self._config, session, transport, vin, cache=self._cache)
 
     async def get_charging_status(self, vin: str) -> ChargingStatus:
         """Fetch smart charging status (SOC, charge state, time-to-full).
@@ -696,6 +827,14 @@ class BydClient:
         ChargingStatus
             Battery and charging state.
         """
-        session = self._require_session()
+        session = await self.ensure_session()
         transport = self._require_transport()
-        return await fetch_charging_status(self._config, session, transport, vin, cache=self._cache)
+        try:
+            return await fetch_charging_status(self._config, session, transport, vin, cache=self._cache)
+        except BydApiError as exc:
+            if exc.code not in _SESSION_EXPIRED_CODES:
+                raise
+            _logger.debug("Session rejected (code %s) — re-authenticating", exc.code)
+            self.invalidate_session()
+            session = await self.ensure_session()
+            return await fetch_charging_status(self._config, session, transport, vin, cache=self._cache)
