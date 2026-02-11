@@ -1,7 +1,5 @@
 """Vehicle realtime data endpoints.
 
-Ports pollVehicleRealtime from client.js lines 391-463.
-
 Endpoints:
   - /vehicleInfo/vehicle/vehicleRealTimeRequest (trigger)
   - /vehicleInfo/vehicle/vehicleRealTimeResult (poll)
@@ -20,7 +18,16 @@ from pybyd._crypto.aes import aes_decrypt_utf8
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
 from pybyd.exceptions import BydApiError
-from pybyd.models.realtime import VehicleRealtimeData
+from pybyd.models.realtime import (
+    ConnectState,
+    DoorOpenState,
+    LockState,
+    OnlineState,
+    TirePressureUnit,
+    VehicleRealtimeData,
+    VehicleState,
+    WindowState,
+)
 from pybyd.session import Session
 
 _logger = logging.getLogger(__name__)
@@ -93,28 +100,153 @@ def _is_realtime_data_ready(vehicle_info: dict[str, Any]) -> bool:
     return (_safe_float(vehicle_info.get("enduranceMileage")) or 0) > 0
 
 
+def _to_enum(enum_cls: type, value: Any, default: Any = None) -> Any:
+    """Safely coerce a value into an IntEnum, returning default on failure."""
+    v = _safe_int(value)
+    if v is None:
+        return default
+    try:
+        return enum_cls(v)
+    except ValueError:
+        return v  # Return raw int if not a known enum member
+
+
+def _safe_str(value: Any) -> str | None:
+    """Return string value, or None if missing/placeholder."""
+    if value is None:
+        return None
+    s = str(value)
+    return s if s else None
+
+
 def _parse_vehicle_info(data: dict[str, Any]) -> VehicleRealtimeData:
-    """Parse raw vehicle info dict into a typed dataclass."""
+    """Parse raw vehicle info dict into a typed dataclass.
+
+    Uses enum coercion for known integer-enum fields per PROTOCOL.md.
+    Energy consumption fields (totalEnergy, nearestEnergyConsumption,
+    recent50kmEnergy) are kept as strings since the API returns ``"--"``
+    when values are unavailable.
+    """
     return VehicleRealtimeData(
-        online_state=_safe_int(data.get("onlineState")) or 0,
-        vehicle_state=str(data.get("vehicleState", "")),
-        elec_percent=_safe_float(data.get("elecPercent") or data.get("powerBattery")),
-        endurance_mileage=_safe_float(data.get("enduranceMileage") or data.get("evEndurance")),
-        total_mileage=_safe_float(data.get("totalMileageV2") or data.get("totalMileage")),
+        # Connection & state
+        online_state=_to_enum(OnlineState, data.get("onlineState"), OnlineState.UNKNOWN),
+        connect_state=_to_enum(ConnectState, data.get("connectState"), ConnectState.UNKNOWN),
+        vehicle_state=_to_enum(VehicleState, data.get("vehicleState"), VehicleState.OFF),
+        request_serial=data.get("requestSerial"),
+
+        # Battery & range
+        elec_percent=_safe_float(data.get("elecPercent")),
+        power_battery=_safe_float(data.get("powerBattery")),
+        endurance_mileage=_safe_float(data.get("enduranceMileage")),
+        ev_endurance=_safe_float(data.get("evEndurance")),
+        endurance_mileage_v2=_safe_float(data.get("enduranceMileageV2")),
+        endurance_mileage_v2_unit=_safe_str(data.get("enduranceMileageV2Unit")),
+        total_mileage=_safe_float(data.get("totalMileage")),
+        total_mileage_v2=_safe_float(data.get("totalMileageV2")),
+        total_mileage_v2_unit=_safe_str(data.get("totalMileageV2Unit")),
+
+        # Driving
         speed=_safe_float(data.get("speed")),
+        power_gear=_safe_int(data.get("powerGear")),
+
+        # Climate
         temp_in_car=_safe_float(data.get("tempInCar")),
-        charging_state=str(data.get("chargingState") or data.get("chargeState") or ""),
-        left_front_door=str(data.get("leftFrontDoor", "")),
-        right_front_door=str(data.get("rightFrontDoor", "")),
-        left_rear_door=str(data.get("leftRearDoor", "")),
-        right_rear_door=str(data.get("rightRearDoor", "")),
-        trunk_lid=str(data.get("trunkLid", "")),
+        main_setting_temp=_safe_int(data.get("mainSettingTemp")),
+        main_setting_temp_new=_safe_float(data.get("mainSettingTempNew")),
+        air_run_state=_safe_int(data.get("airRunState")),
+
+        # Seat heating/ventilation
+        main_seat_heat_state=_safe_int(data.get("mainSeatHeatState")),
+        main_seat_ventilation_state=_safe_int(data.get("mainSeatVentilationState")),
+        copilot_seat_heat_state=_safe_int(data.get("copilotSeatHeatState")),
+        copilot_seat_ventilation_state=_safe_int(data.get("copilotSeatVentilationState")),
+        steering_wheel_heat_state=_safe_int(data.get("steeringWheelHeatState")),
+        lr_seat_heat_state=_safe_int(data.get("lrSeatHeatState")),
+        lr_seat_ventilation_state=_safe_int(data.get("lrSeatVentilationState")),
+        rr_seat_heat_state=_safe_int(data.get("rrSeatHeatState")),
+        rr_seat_ventilation_state=_safe_int(data.get("rrSeatVentilationState")),
+
+        # Charging
+        charging_state=_safe_int(data.get("chargingState")) or 0,
+        charge_state=_safe_int(data.get("chargeState")),
+        wait_status=_safe_int(data.get("waitStatus")),
+        full_hour=_safe_int(data.get("fullHour")),
+        full_minute=_safe_int(data.get("fullMinute")),
+        charge_remaining_hours=_safe_int(data.get("remainingHours")),
+        charge_remaining_minutes=_safe_int(data.get("remainingMinutes")),
+        booking_charge_state=_safe_int(data.get("bookingChargeState")),
+        booking_charging_hour=_safe_int(data.get("bookingChargingHour")),
+        booking_charging_minute=_safe_int(data.get("bookingChargingMinute")),
+
+        # Doors
+        left_front_door=_to_enum(DoorOpenState, data.get("leftFrontDoor")),
+        right_front_door=_to_enum(DoorOpenState, data.get("rightFrontDoor")),
+        left_rear_door=_to_enum(DoorOpenState, data.get("leftRearDoor")),
+        right_rear_door=_to_enum(DoorOpenState, data.get("rightRearDoor")),
+        trunk_lid=_to_enum(DoorOpenState, data.get("trunkLid")),
+        sliding_door=_to_enum(DoorOpenState, data.get("slidingDoor")),
+        forehold=_to_enum(DoorOpenState, data.get("forehold")),
+
+        # Locks
+        left_front_door_lock=_to_enum(LockState, data.get("leftFrontDoorLock")),
+        right_front_door_lock=_to_enum(LockState, data.get("rightFrontDoorLock")),
+        left_rear_door_lock=_to_enum(LockState, data.get("leftRearDoorLock")),
+        right_rear_door_lock=_to_enum(LockState, data.get("rightRearDoorLock")),
+        sliding_door_lock=_to_enum(LockState, data.get("slidingDoorLock")),
+
+        # Windows
+        left_front_window=_to_enum(WindowState, data.get("leftFrontWindow")),
+        right_front_window=_to_enum(WindowState, data.get("rightFrontWindow")),
+        left_rear_window=_to_enum(WindowState, data.get("leftRearWindow")),
+        right_rear_window=_to_enum(WindowState, data.get("rightRearWindow")),
+        skylight=_to_enum(WindowState, data.get("skylight")),
+
+        # Tire pressure
         left_front_tire_pressure=_safe_float(data.get("leftFrontTirepressure")),
         right_front_tire_pressure=_safe_float(data.get("rightFrontTirepressure")),
         left_rear_tire_pressure=_safe_float(data.get("leftRearTirepressure")),
         right_rear_tire_pressure=_safe_float(data.get("rightRearTirepressure")),
+        left_front_tire_status=_safe_int(data.get("leftFrontTireStatus")),
+        right_front_tire_status=_safe_int(data.get("rightFrontTireStatus")),
+        left_rear_tire_status=_safe_int(data.get("leftRearTireStatus")),
+        right_rear_tire_status=_safe_int(data.get("rightRearTireStatus")),
+        tire_press_unit=_to_enum(TirePressureUnit, data.get("tirePressUnit")),
+        tirepressure_system=_safe_int(data.get("tirepressureSystem")),
+        rapid_tire_leak=_safe_int(data.get("rapidTireLeak")),
+
+        # Energy consumption (kept as strings — API returns "--" when unavailable)
+        total_power=_safe_float(data.get("totalPower")),
+        total_energy=_safe_str(data.get("totalEnergy")),
+        nearest_energy_consumption=_safe_str(data.get("nearestEnergyConsumption")),
+        nearest_energy_consumption_unit=_safe_str(data.get("nearestEnergyConsumptionUnit")),
+        recent_50km_energy=_safe_str(data.get("recent50kmEnergy")),
+
+        # Fuel (hybrid)
+        oil_endurance=_safe_float(data.get("oilEndurance")),
+        oil_percent=_safe_float(data.get("oilPercent")),
+        total_oil=_safe_float(data.get("totalOil")),
+
+        # System indicators
+        power_system=_safe_int(data.get("powerSystem")),
+        engine_status=_safe_int(data.get("engineStatus")),
+        epb=_safe_int(data.get("epb")),
+        eps=_safe_int(data.get("eps")),
+        esp=_safe_int(data.get("esp")),
+        abs_warning=_safe_int(data.get("abs")),
+        svs=_safe_int(data.get("svs")),
+        srs=_safe_int(data.get("srs")),
+        ect=_safe_int(data.get("ect")),
+        ect_value=_safe_int(data.get("ectValue")),
+        pwr=_safe_int(data.get("pwr")),
+
+        # Feature states
+        sentry_status=_safe_int(data.get("sentryStatus")),
+        battery_heat_state=_safe_int(data.get("batteryHeatState")),
+        charge_heat_state=_safe_int(data.get("chargeHeatState")),
+        upgrade_status=_safe_int(data.get("upgradeStatus")),
+
+        # Metadata
         timestamp=_safe_int(data.get("time")),
-        request_serial=data.get("requestSerial"),
         raw=data,
     )
 

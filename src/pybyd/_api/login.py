@@ -10,9 +10,8 @@ import secrets
 import time
 from typing import Any
 
-from pybyd._constants import TRANSPORT_KEY
 from pybyd._crypto.aes import aes_decrypt_utf8, aes_encrypt_hex
-from pybyd._crypto.hashing import compute_checkcode, md5_hex, sha1_mixed
+from pybyd._crypto.hashing import compute_checkcode, md5_hex, pwd_login_key, sha1_mixed
 from pybyd._crypto.signing import build_sign_string
 from pybyd.config import BydConfig
 from pybyd.exceptions import BydAuthenticationError
@@ -70,7 +69,7 @@ def build_login_request(config: BydConfig, now_ms: int) -> dict[str, Any]:
 
     encry_data = aes_encrypt_hex(
         json.dumps(inner, separators=(",", ":")),
-        TRANSPORT_KEY,
+        pwd_login_key(config.password),
     )
 
     password_md5 = md5_hex(config.password)
@@ -107,6 +106,7 @@ def build_login_request(config: BydConfig, now_ms: int) -> dict[str, Any]:
 
 def parse_login_response(
     outer_response: dict[str, Any],
+    password: str,
 ) -> AuthToken:
     """Parse login response and extract the auth token.
 
@@ -114,6 +114,8 @@ def parse_login_response(
     ----------
     outer_response : dict
         Decoded outer response from the API.
+    password : str
+        Plaintext password to derive the login AES key.
 
     Returns
     -------
@@ -139,7 +141,7 @@ def parse_login_response(
             endpoint="/app/account/login",
         )
 
-    inner = json.loads(aes_decrypt_utf8(respond_data, TRANSPORT_KEY))
+    inner = json.loads(aes_decrypt_utf8(respond_data, pwd_login_key(password)))
     token = inner.get("token") if isinstance(inner, dict) else None
 
     if not token or not token.get("userId") or not token.get("signToken") or not token.get("encryToken"):

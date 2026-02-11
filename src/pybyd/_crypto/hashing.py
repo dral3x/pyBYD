@@ -28,6 +28,24 @@ def md5_hex(value: str) -> str:
     return hashlib.md5(value.encode("utf-8")).hexdigest().upper()
 
 
+def pwd_login_key(password: str) -> str:
+    """Derive the login AES key from a plaintext password.
+
+    Mirrors JS: md5Hex(md5Hex(password))
+
+    Parameters
+    ----------
+    password : str
+        The plaintext password.
+
+    Returns
+    -------
+    str
+        32-character uppercase hex digest.
+    """
+    return md5_hex(md5_hex(password))
+
+
 def sha1_mixed(value: str) -> str:
     """Compute SHA1 with alternating-case hex and zero filtering.
 

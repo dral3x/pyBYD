@@ -11,15 +11,25 @@ class RemoteCommand(enum.StrEnum):
     """Remote control instruction codes.
 
     Each value corresponds to the ``instructionCode`` string sent
-    to the BYD API.
+    to the BYD API (per PROTOCOL.md).
     """
 
-    LOCK = "10"
-    UNLOCK = "11"
-    FLASH_LIGHTS = "20"
-    HORN = "21"
-    START_CLIMATE = "30"
-    STOP_CLIMATE = "31"
+    LOCK = "101"
+    UNLOCK = "102"
+    START_CLIMATE = "111"
+    STOP_CLIMATE = "112"
+    OPEN_TRUNK = "121"
+    CLOSE_WINDOWS = "141"
+    FLASH_LIGHTS = "301"
+    HORN = "302"
+
+
+class ControlState(enum.IntEnum):
+    """Control command execution state."""
+
+    PENDING = 0
+    SUCCESS = 1
+    FAILURE = 2
 
 
 @dataclasses.dataclass(frozen=True)
@@ -28,8 +38,8 @@ class RemoteControlResult:
 
     Parameters
     ----------
-    control_state : int
-        0 = pending, 1 = success, 2 = failed.
+    control_state : ControlState
+        PENDING(0), SUCCESS(1), or FAILURE(2).
     success : bool
         Whether the command completed successfully.
     request_serial : str or None
@@ -38,7 +48,7 @@ class RemoteControlResult:
         Full API response dict.
     """
 
-    control_state: int
+    control_state: ControlState
     success: bool
     request_serial: str | None
     raw: dict[str, Any]

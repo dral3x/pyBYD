@@ -40,7 +40,7 @@ class BydConfig:
         BYD account email or phone number.
     password : str
         BYD account password.
-    base_url : str
+    base_url : app
         API base URL. Defaults to the EU overseas endpoint.
     country_code : str
         ISO country code (e.g. ``"NL"``).
@@ -68,8 +68,8 @@ class BydConfig:
     country_code: str = "NL"
     language: str = "en"
     time_zone: str = "Europe/Amsterdam"
-    app_version: str = "2.2.1"
-    app_inner_version: str = "220"
+    app_version: str = "3.2.2"
+    app_inner_version: str = "322"
     soft_type: str = "0"
     tbox_version: str = "3"
     is_auto: str = "1"

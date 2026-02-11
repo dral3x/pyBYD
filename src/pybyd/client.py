@@ -8,9 +8,11 @@ from typing import Any
 
 import aiohttp
 
+from pybyd._api.charging import fetch_charging_status
 from pybyd._api.control import poll_remote_control
 from pybyd._api.energy import fetch_energy_consumption
 from pybyd._api.gps import poll_gps_info
+from pybyd._api.hvac import fetch_hvac_status
 from pybyd._api.login import build_login_request, parse_login_response
 from pybyd._api.realtime import poll_vehicle_realtime
 from pybyd._api.vehicles import build_list_request, parse_vehicle_list
@@ -18,9 +20,11 @@ from pybyd._crypto.bangcle import BangcleCodec
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
 from pybyd.exceptions import BydError
+from pybyd.models.charging import ChargingStatus
 from pybyd.models.control import RemoteCommand, RemoteControlResult
 from pybyd.models.energy import EnergyConsumption
 from pybyd.models.gps import GpsInfo
+from pybyd.models.hvac import HvacStatus
 from pybyd.models.realtime import VehicleRealtimeData
 from pybyd.models.token import AuthToken
 from pybyd.models.vehicle import Vehicle
@@ -112,7 +116,7 @@ class BydClient:
         now_ms = int(time.time() * 1000)
         outer = build_login_request(self._config, now_ms)
         response = await transport.post_secure("/app/account/login", outer)
-        token = parse_login_response(response)
+        token = parse_login_response(response, self._config.password)
 
         self._session = Session(
             user_id=token.user_id,
@@ -382,3 +386,65 @@ class BydClient:
             Forwarded to :meth:`remote_control`.
         """
         return await self.remote_control(vin, RemoteCommand.STOP_CLIMATE, **kwargs)
+
+    async def open_trunk(self, vin: str, **kwargs: Any) -> RemoteControlResult:
+        """Open the trunk.
+
+        Parameters
+        ----------
+        vin : str
+            Vehicle Identification Number.
+        **kwargs
+            Forwarded to :meth:`remote_control`.
+        """
+        return await self.remote_control(vin, RemoteCommand.OPEN_TRUNK, **kwargs)
+
+    async def close_windows(self, vin: str, **kwargs: Any) -> RemoteControlResult:
+        """Close all windows.
+
+        Parameters
+        ----------
+        vin : str
+            Vehicle Identification Number.
+        **kwargs
+            Forwarded to :meth:`remote_control`.
+        """
+        return await self.remote_control(vin, RemoteCommand.CLOSE_WINDOWS, **kwargs)
+
+    async def get_hvac_status(self, vin: str) -> HvacStatus:
+        """Fetch current HVAC / climate control status.
+
+        Uses ``/control/getStatusNow``.
+
+        Parameters
+        ----------
+        vin : str
+            Vehicle Identification Number.
+
+        Returns
+        -------
+        HvacStatus
+            Current climate control state.
+        """
+        session = self._require_session()
+        transport = self._require_transport()
+        return await fetch_hvac_status(self._config, session, transport, vin)
+
+    async def get_charging_status(self, vin: str) -> ChargingStatus:
+        """Fetch smart charging status (SOC, charge state, time-to-full).
+
+        Uses ``/control/smartCharge/homePage``.
+
+        Parameters
+        ----------
+        vin : str
+            Vehicle Identification Number.
+
+        Returns
+        -------
+        ChargingStatus
+            Battery and charging state.
+        """
+        session = self._require_session()
+        transport = self._require_transport()
+        return await fetch_charging_status(self._config, session, transport, vin)

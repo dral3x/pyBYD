@@ -19,7 +19,7 @@ from pybyd._crypto.aes import aes_decrypt_utf8
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
 from pybyd.exceptions import BydApiError, BydRemoteControlError
-from pybyd.models.control import RemoteCommand, RemoteControlResult
+from pybyd.models.control import ControlState, RemoteCommand, RemoteControlResult
 from pybyd.session import Session
 
 _logger = logging.getLogger(__name__)
@@ -77,10 +77,14 @@ def _is_remote_control_ready(data: dict[str, Any]) -> bool:
 
 def _parse_control_result(data: dict[str, Any]) -> RemoteControlResult:
     """Parse raw remote control dict into a typed dataclass."""
-    control_state = _safe_int(data.get("controlState")) or 0
+    raw_state = _safe_int(data.get("controlState")) or 0
+    try:
+        control_state = ControlState(raw_state)
+    except ValueError:
+        control_state = ControlState.PENDING
     return RemoteControlResult(
         control_state=control_state,
-        success=control_state == 1,
+        success=control_state == ControlState.SUCCESS,
         request_serial=data.get("requestSerial"),
         raw=data,
     )

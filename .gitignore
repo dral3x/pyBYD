@@ -37,3 +37,7 @@ Thumbs.db
 # Environment
 .env
 .claude
+
+# Sensitive protocol docs
+PROTOCOL.md
+scripts/FINDINGS.md
