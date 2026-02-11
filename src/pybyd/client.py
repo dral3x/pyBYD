@@ -494,6 +494,8 @@ class BydClient:
             "mainSettingTemp": 7,
             "copilotSettingTemp": 7,
             "cycleMode": 2,
+            "airAccuracy": 1,
+            "airConditioningMode": 0,
         }
         return await self.remote_control(
             vin, RemoteCommand.STOP_CLIMATE,
@@ -533,9 +535,18 @@ class BydClient:
         All heating/ventilation levels are 0=off, 1–3 for intensity.
         Steering wheel heating is 0=off, 1=on.
         """
+        any_active = any([
+            main_heat, main_ventilation,
+            copilot_heat, copilot_ventilation,
+            lr_seat_heat, lr_seat_ventilation,
+            rr_seat_heat, rr_seat_ventilation,
+            lr_third_heat, lr_third_ventilation,
+            rr_third_heat, rr_third_ventilation,
+            steering_wheel_heat,
+        ])
         params = {
             "chairType": "5",
-            "remoteMode": 1,
+            "remoteMode": 1 if any_active else 0,
             "mainHeat": main_heat,
             "mainVentilation": main_ventilation,
             "copilotHeat": copilot_heat,
