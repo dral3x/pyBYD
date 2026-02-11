@@ -13,6 +13,7 @@ import time
 from typing import Any
 
 from pybyd._api._envelope import build_token_outer_envelope
+from pybyd._cache import VehicleDataCache
 from pybyd._crypto.aes import aes_decrypt_utf8
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
@@ -109,6 +110,7 @@ async def fetch_hvac_status(
     session: Session,
     transport: SecureTransport,
     vin: str,
+    cache: VehicleDataCache | None = None,
 ) -> HvacStatus:
     """Fetch current HVAC/climate control status for a vehicle."""
     now_ms = int(time.time() * 1000)
@@ -125,4 +127,7 @@ async def fetch_hvac_status(
 
     data = json.loads(aes_decrypt_utf8(response["respondData"], content_key))
     _logger.debug("HVAC status response keys=%s", list(data.keys()) if isinstance(data, dict) else [])
-    return _parse_hvac_status(data if isinstance(data, dict) else {})
+    status = data.get("statusNow", data) if isinstance(data, dict) else {}
+    if cache is not None and isinstance(status, dict):
+        status = cache.merge_hvac(vin, status)
+    return _parse_hvac_status(status if isinstance(status, dict) else {})

@@ -11,9 +11,11 @@ import asyncio
 import json
 import logging
 import secrets
+import time
 from typing import Any
 
 from pybyd._api._envelope import build_token_outer_envelope
+from pybyd._cache import VehicleDataCache
 from pybyd._crypto.aes import aes_decrypt_utf8
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
@@ -274,6 +276,8 @@ async def poll_vehicle_realtime(
     *,
     poll_attempts: int = 10,
     poll_interval: float = 1.5,
+    cache: VehicleDataCache | None = None,
+    stale_after: float | None = None,
 ) -> VehicleRealtimeData:
     """Poll vehicle realtime data until ready or attempts exhausted.
 
@@ -302,6 +306,15 @@ async def poll_vehicle_realtime(
     BydApiError
         If the API returns an error.
     """
+    if cache is not None:
+        now_ms = int(time.time() * 1000)
+        threshold = poll_interval if stale_after is None else stale_after
+        if threshold is not None and threshold > 0:
+            age = cache.get_realtime_age_seconds(vin, now_ms)
+            if age is not None and age <= threshold:
+                cached = cache.get_realtime(vin)
+                if cached:
+                    return _parse_vehicle_info(cached)
     # Phase 1: Trigger request
     vehicle_info, serial = await _fetch_realtime_endpoint(
         "/vehicleInfo/vehicle/vehicleRealTimeRequest",
@@ -310,6 +323,11 @@ async def poll_vehicle_realtime(
         transport,
         vin,
     )
+    merged_latest = (
+        cache.merge_realtime(vin, vehicle_info)
+        if cache is not None and isinstance(vehicle_info, dict)
+        else (vehicle_info if isinstance(vehicle_info, dict) else {})
+    )
     _logger.debug(
         "Realtime request: onlineState=%s serial=%s",
         vehicle_info.get("onlineState") if isinstance(vehicle_info, dict) else None,
@@ -317,10 +335,10 @@ async def poll_vehicle_realtime(
     )
 
     if isinstance(vehicle_info, dict) and _is_realtime_data_ready(vehicle_info):
-        return _parse_vehicle_info(vehicle_info)
+        return _parse_vehicle_info(merged_latest)
 
     if not serial:
-        return _parse_vehicle_info(vehicle_info if isinstance(vehicle_info, dict) else {})
+        return _parse_vehicle_info(merged_latest)
 
     # Phase 2: Poll for results
     latest = vehicle_info
@@ -337,6 +355,10 @@ async def poll_vehicle_realtime(
                 vin,
                 serial,
             )
+            if cache is not None and isinstance(latest, dict):
+                merged_latest = cache.merge_realtime(vin, latest)
+            elif isinstance(latest, dict):
+                merged_latest = latest
             _logger.debug(
                 "Realtime poll attempt=%d onlineState=%s serial=%s",
                 attempt,
@@ -348,4 +370,4 @@ async def poll_vehicle_realtime(
         except BydApiError:
             _logger.debug("Realtime poll attempt=%d failed", attempt, exc_info=True)
 
-    return _parse_vehicle_info(latest if isinstance(latest, dict) else {})
+    return _parse_vehicle_info(merged_latest if isinstance(merged_latest, dict) else {})

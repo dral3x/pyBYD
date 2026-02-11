@@ -59,3 +59,11 @@ class BydAuthenticationError(BydApiError):
 
 class BydRemoteControlError(BydApiError):
     """Remote control command failed (controlState=2)."""
+
+
+class BydRateLimitError(BydApiError):
+    """Rate limited — a previous command is still in progress (code 6024).
+
+    This is raised when the server returns code 6024 after exhausting
+    all automatic retry attempts.
+    """

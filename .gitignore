@@ -41,6 +41,15 @@ Thumbs.db
 .env
 .claude
 
-# Sensitive / local-only
-PROTOCOL.md
-scripts/
+# Local debug outputs
+debug_commands.md
+scripts/probe_results.json
+
+# Test/coverage artifacts
+.coverage.*
+coverage.xml
+
+# Tooling
+.nox/
+.tox/
+.hypothesis/

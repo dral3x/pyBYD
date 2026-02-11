@@ -14,10 +14,6 @@ class RemoteCommand(enum.StrEnum):
     ``/control/remoteControl`` on the BYD API, as confirmed by
     Niek (BYD-re) and TA2k's APK analysis.
 
-    .. warning::
-        Remote control is **unverified** — the API returns error 1007
-        for all commands as of 2025-07.  These enum values are kept
-        for reference and forward-compatibility.
     """
 
     LOCK = "LOCKDOOR"

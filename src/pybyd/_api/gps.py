@@ -13,9 +13,11 @@ import asyncio
 import json
 import logging
 import secrets
+import time
 from typing import Any
 
 from pybyd._api._envelope import build_token_outer_envelope
+from pybyd._cache import VehicleDataCache
 from pybyd._crypto.aes import aes_decrypt_utf8
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
@@ -143,6 +145,8 @@ async def poll_gps_info(
     *,
     poll_attempts: int = 10,
     poll_interval: float = 1.5,
+    cache: VehicleDataCache | None = None,
+    stale_after: float | None = None,
 ) -> GpsInfo:
     """Poll GPS info until ready or attempts exhausted.
 
@@ -171,6 +175,15 @@ async def poll_gps_info(
     BydApiError
         If the initial GPS request fails.
     """
+    if cache is not None:
+        now_ms = int(time.time() * 1000)
+        threshold = poll_interval if stale_after is None else stale_after
+        if threshold is not None and threshold > 0:
+            age = cache.get_gps_age_seconds(vin, now_ms)
+            if age is not None and age <= threshold:
+                cached = cache.get_gps(vin)
+                if cached:
+                    return _parse_gps_info(cached)
     # Phase 1: Trigger request
     try:
         gps_info, serial = await _fetch_gps_endpoint(
@@ -184,6 +197,12 @@ async def poll_gps_info(
         _logger.debug("GPS request failed", exc_info=True)
         raise
 
+    merged_latest = (
+        cache.merge_gps(vin, gps_info)
+        if cache is not None and isinstance(gps_info, dict)
+        else (gps_info if isinstance(gps_info, dict) else {})
+    )
+
     _logger.debug(
         "GPS request: keys=%s serial=%s",
         list(gps_info.keys()) if isinstance(gps_info, dict) else [],
@@ -191,10 +210,10 @@ async def poll_gps_info(
     )
 
     if isinstance(gps_info, dict) and _is_gps_info_ready(gps_info):
-        return _parse_gps_info(gps_info)
+        return _parse_gps_info(merged_latest)
 
     if not serial:
-        return _parse_gps_info(gps_info if isinstance(gps_info, dict) else {})
+        return _parse_gps_info(merged_latest)
 
     # Phase 2: Poll for results
     latest = gps_info
@@ -211,6 +230,10 @@ async def poll_gps_info(
                 vin,
                 serial,
             )
+            if cache is not None and isinstance(latest, dict):
+                merged_latest = cache.merge_gps(vin, latest)
+            elif isinstance(latest, dict):
+                merged_latest = latest
             _logger.debug(
                 "GPS poll attempt=%d keys=%s serial=%s",
                 attempt,
@@ -222,4 +245,4 @@ async def poll_gps_info(
         except BydApiError:
             _logger.debug("GPS poll attempt=%d failed", attempt, exc_info=True)
 
-    return _parse_gps_info(latest if isinstance(latest, dict) else {})
+    return _parse_gps_info(merged_latest if isinstance(merged_latest, dict) else {})

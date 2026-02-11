@@ -58,6 +58,10 @@ class BydConfig:
         T-Box version for vehicle communication.
     is_auto : str
         Auto-login flag.
+    control_pin : str or None
+        6-digit remote control PIN set in the BYD app. Required for
+        vehicle control commands (lock, unlock, climate, etc.).
+        The PIN is hashed with MD5 before sending to the API.
     device : DeviceProfile
         Device identity fields.
     """
@@ -73,6 +77,7 @@ class BydConfig:
     soft_type: str = "0"
     tbox_version: str = "3"
     is_auto: str = "1"
+    control_pin: str | None = None
     device: DeviceProfile = dataclasses.field(default_factory=DeviceProfile)
 
     @classmethod
@@ -136,6 +141,7 @@ class BydConfig:
             "BYD_SOFT_TYPE": "soft_type",
             "BYD_TBOX_VERSION": "tbox_version",
             "BYD_IS_AUTO": "is_auto",
+            "BYD_CONTROL_PIN": "control_pin",
         }
         config_kwargs: dict[str, Any] = {"device": device}
         for env_key, field_name in _ENV_CONFIG_MAP.items():

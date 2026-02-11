@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, Callable
 
 import aiohttp
 
@@ -14,8 +14,10 @@ from pybyd._api.energy import fetch_energy_consumption
 from pybyd._api.gps import poll_gps_info
 from pybyd._api.hvac import fetch_hvac_status
 from pybyd._api.login import build_login_request, parse_login_response
+from pybyd._crypto.hashing import md5_hex
 from pybyd._api.realtime import poll_vehicle_realtime
 from pybyd._api.vehicles import build_list_request, parse_vehicle_list
+from pybyd._cache import VehicleDataCache
 from pybyd._crypto.bangcle import BangcleCodec
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
@@ -31,6 +33,14 @@ from pybyd.models.vehicle import Vehicle
 from pybyd.session import Session
 
 _logger = logging.getLogger(__name__)
+
+
+def _validate_climate_temperature(value: int, name: str) -> int:
+    if not isinstance(value, int):
+        raise ValueError(f"{name} must be an int in range 1-17 (BYD level scale)")
+    if value < 1 or value > 17:
+        raise ValueError(f"{name} must be in range 1-17 (BYD level scale)")
+    return value
 
 
 class BydClient:
@@ -54,6 +64,8 @@ class BydClient:
     codec : BangcleCodec or None
         Optional Bangcle codec instance. If not provided, one is
         created with default table loading.
+    debug_recorder : callable or None
+        Optional callback for recording control command payloads.
     """
 
     def __init__(
@@ -62,6 +74,7 @@ class BydClient:
         *,
         session: aiohttp.ClientSession | None = None,
         codec: BangcleCodec | None = None,
+        debug_recorder: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._config = config
         self._external_session = session is not None
@@ -69,6 +82,8 @@ class BydClient:
         self._codec = codec or BangcleCodec()
         self._transport: SecureTransport | None = None
         self._session: Session | None = None
+        self._cache = VehicleDataCache()
+        self._debug_recorder = debug_recorder
 
     async def __aenter__(self) -> BydClient:
         if self._http_session is None:
@@ -146,7 +161,11 @@ class BydClient:
         now_ms = int(time.time() * 1000)
         outer, content_key = build_list_request(self._config, session, now_ms)
         response = await transport.post_secure("/app/account/getAllListByUserId", outer)
-        return parse_vehicle_list(response, content_key)
+        vehicles = parse_vehicle_list(response, content_key)
+        for vehicle in vehicles:
+            if isinstance(vehicle.raw, dict) and vehicle.vin:
+                self._cache.merge_vehicle(vehicle.vin, vehicle.raw)
+        return vehicles
 
     async def get_vehicle_realtime(
         self,
@@ -154,6 +173,7 @@ class BydClient:
         *,
         poll_attempts: int = 10,
         poll_interval: float = 1.5,
+        stale_after: float | None = None,
     ) -> VehicleRealtimeData:
         """Fetch realtime telemetry data for a vehicle.
 
@@ -168,6 +188,9 @@ class BydClient:
             Maximum number of result poll attempts (default 10).
         poll_interval : float
             Seconds between poll attempts (default 1.5).
+        stale_after : float or None
+            If set, skip polling when cached data is newer than this
+            number of seconds. Defaults to ``poll_interval``.
 
         Returns
         -------
@@ -190,6 +213,8 @@ class BydClient:
             vin,
             poll_attempts=poll_attempts,
             poll_interval=poll_interval,
+            cache=self._cache,
+            stale_after=stale_after,
         )
 
     async def get_gps_info(
@@ -198,6 +223,7 @@ class BydClient:
         *,
         poll_attempts: int = 10,
         poll_interval: float = 1.5,
+        stale_after: float | None = None,
     ) -> GpsInfo:
         """Fetch GPS location data for a vehicle.
 
@@ -212,6 +238,9 @@ class BydClient:
             Maximum number of result poll attempts (default 10).
         poll_interval : float
             Seconds between poll attempts (default 1.5).
+        stale_after : float or None
+            If set, skip polling when cached data is newer than this
+            number of seconds. Defaults to ``poll_interval``.
 
         Returns
         -------
@@ -234,6 +263,8 @@ class BydClient:
             vin,
             poll_attempts=poll_attempts,
             poll_interval=poll_interval,
+            cache=self._cache,
+            stale_after=stale_after,
         )
 
     async def get_energy_consumption(self, vin: str) -> EnergyConsumption:
@@ -263,7 +294,27 @@ class BydClient:
             session,
             transport,
             vin,
+            cache=self._cache,
         )
+
+    def _resolve_command_pwd(self, command_pwd: str | None) -> str:
+        """Resolve the command password (MD5-hashed control PIN).
+
+        If *command_pwd* is provided it is used as-is (caller is
+        responsible for hashing).  Otherwise the PIN from
+        ``config.control_pin`` is MD5-hashed automatically.
+
+        Returns
+        -------
+        str
+            MD5 uppercase hex of the control PIN, or empty string
+            if no PIN is configured.
+        """
+        if command_pwd is not None:
+            return command_pwd
+        if self._config.control_pin:
+            return md5_hex(self._config.control_pin)
+        return ""
 
     async def remote_control(
         self,
@@ -274,15 +325,12 @@ class BydClient:
         command_pwd: str | None = None,
         poll_attempts: int = 10,
         poll_interval: float = 1.5,
+        rate_limit_retries: int = 3,
+        rate_limit_delay: float = 5.0,
+        command_retries: int = 3,
+        command_retry_delay: float = 3.0,
     ) -> RemoteControlResult:
         """Send a remote control command to a vehicle.
-
-        .. warning::
-            **Non-functional as of 2025-07.**  The ``/control/remoteControl``
-            endpoint returns error code 1007 for every tested command and
-            account.  The payload format matches TA2k's ioBroker.byd adapter
-            but the server rejects all requests.  This method is retained so
-            the wire format is ready once the root cause is identified.
 
         Triggers the command and polls until the vehicle confirms
         success/failure or the poll limit is reached.
@@ -297,11 +345,21 @@ class BydClient:
             Command-specific parameters (serialised as
             ``controlParamsMap``).
         command_pwd : str or None
-            Optional control password (PIN).
+            Pre-hashed control password. If ``None``, the
+            ``control_pin`` from config is MD5-hashed automatically.
         poll_attempts : int
             Maximum number of result poll attempts (default 10).
         poll_interval : float
             Seconds between poll attempts (default 1.5).
+        rate_limit_retries : int
+            How many times to retry on code 6024 (default 3).
+        rate_limit_delay : float
+            Seconds to wait between rate-limit retries (default 5.0).
+        command_retries : int
+            How many times to retry the whole command on failure
+            (controlState=2). Default 3.
+        command_retry_delay : float
+            Seconds to wait between command retries (default 3.0).
 
         Returns
         -------
@@ -311,7 +369,9 @@ class BydClient:
         Raises
         ------
         BydRemoteControlError
-            If the command fails (controlState=2).
+            If the command fails (controlState=2) after all retries.
+        BydRateLimitError
+            If rate-limited after all retries (code 6024).
         BydApiError
             If the API returns an error.
         BydError
@@ -319,6 +379,7 @@ class BydClient:
         """
         session = self._require_session()
         transport = self._require_transport()
+        resolved_pwd = self._resolve_command_pwd(command_pwd)
         return await poll_remote_control(
             self._config,
             session,
@@ -326,9 +387,14 @@ class BydClient:
             vin,
             command,
             control_params=control_params,
-            command_pwd=command_pwd,
+            command_pwd=resolved_pwd,
             poll_attempts=poll_attempts,
             poll_interval=poll_interval,
+            rate_limit_retries=rate_limit_retries,
+            rate_limit_delay=rate_limit_delay,
+            command_retries=command_retries,
+            command_retry_delay=command_retry_delay,
+            debug_recorder=self._debug_recorder,
         )
 
     # ── Simple commands (no controlParamsMap) ────────────────
@@ -341,12 +407,10 @@ class BydClient:
         poll_interval: float = 1.5,
         command_pwd: str | None = None,
     ) -> RemoteControlResult:
-        """Lock the vehicle doors.
-
-        .. warning:: Non-functional — see :meth:`remote_control`.
-        """
+        """Lock the vehicle doors."""
         return await self.remote_control(
-            vin, RemoteCommand.LOCK,
+            vin,
+            RemoteCommand.LOCK,
             command_pwd=command_pwd,
             poll_attempts=poll_attempts,
             poll_interval=poll_interval,
@@ -360,12 +424,10 @@ class BydClient:
         poll_interval: float = 1.5,
         command_pwd: str | None = None,
     ) -> RemoteControlResult:
-        """Unlock the vehicle doors.
-
-        .. warning:: Non-functional — see :meth:`remote_control`.
-        """
+        """Unlock the vehicle doors."""
         return await self.remote_control(
-            vin, RemoteCommand.UNLOCK,
+            vin,
+            RemoteCommand.UNLOCK,
             command_pwd=command_pwd,
             poll_attempts=poll_attempts,
             poll_interval=poll_interval,
@@ -378,12 +440,10 @@ class BydClient:
         poll_attempts: int = 10,
         poll_interval: float = 1.5,
     ) -> RemoteControlResult:
-        """Flash the vehicle lights (without horn).
-
-        .. warning:: Non-functional — see :meth:`remote_control`.
-        """
+        """Flash the vehicle lights (without horn)."""
         return await self.remote_control(
-            vin, RemoteCommand.FLASH_LIGHTS,
+            vin,
+            RemoteCommand.FLASH_LIGHTS,
             poll_attempts=poll_attempts,
             poll_interval=poll_interval,
         )
@@ -395,12 +455,10 @@ class BydClient:
         poll_attempts: int = 10,
         poll_interval: float = 1.5,
     ) -> RemoteControlResult:
-        """Flash lights and honk horn to locate the vehicle.
-
-        .. warning:: Non-functional — see :meth:`remote_control`.
-        """
+        """Flash lights and honk horn to locate the vehicle."""
         return await self.remote_control(
-            vin, RemoteCommand.FIND_CAR,
+            vin,
+            RemoteCommand.FIND_CAR,
             poll_attempts=poll_attempts,
             poll_interval=poll_interval,
         )
@@ -412,12 +470,10 @@ class BydClient:
         poll_attempts: int = 10,
         poll_interval: float = 1.5,
     ) -> RemoteControlResult:
-        """Close all windows.
-
-        .. warning:: Non-functional — see :meth:`remote_control`.
-        """
+        """Close all windows."""
         return await self.remote_control(
-            vin, RemoteCommand.CLOSE_WINDOWS,
+            vin,
+            RemoteCommand.CLOSE_WINDOWS,
             poll_attempts=poll_attempts,
             poll_interval=poll_interval,
         )
@@ -438,8 +494,6 @@ class BydClient:
     ) -> RemoteControlResult:
         """Start climate control with temperature settings.
 
-        .. warning:: Non-functional — see :meth:`remote_control`.
-
         Parameters
         ----------
         vin : str
@@ -454,21 +508,25 @@ class BydClient:
         time_span : int
             Duration setting (1=default).
         """
+        temperature = _validate_climate_temperature(temperature, "temperature")
+        if copilot_temperature is not None:
+            copilot_temperature = _validate_climate_temperature(
+                copilot_temperature,
+                "copilot_temperature",
+            )
         params = {
             "airSet": None,
             "remoteMode": 4,
             "timeSpan": time_span,
             "mainSettingTemp": temperature,
-            "copilotSettingTemp": (
-                copilot_temperature if copilot_temperature is not None
-                else temperature
-            ),
+            "copilotSettingTemp": (copilot_temperature if copilot_temperature is not None else temperature),
             "cycleMode": cycle_mode,
             "airAccuracy": 1,
             "airConditioningMode": 1,
         }
         return await self.remote_control(
-            vin, RemoteCommand.START_CLIMATE,
+            vin,
+            RemoteCommand.START_CLIMATE,
             control_params=params,
             command_pwd=command_pwd,
             poll_attempts=poll_attempts,
@@ -483,10 +541,7 @@ class BydClient:
         poll_interval: float = 1.5,
         command_pwd: str | None = None,
     ) -> RemoteControlResult:
-        """Stop climate control.
-
-        .. warning:: Non-functional — see :meth:`remote_control`.
-        """
+        """Stop climate control."""
         params = {
             "airSet": None,
             "remoteMode": 4,
@@ -498,7 +553,8 @@ class BydClient:
             "airConditioningMode": 0,
         }
         return await self.remote_control(
-            vin, RemoteCommand.STOP_CLIMATE,
+            vin,
+            RemoteCommand.STOP_CLIMATE,
             control_params=params,
             command_pwd=command_pwd,
             poll_attempts=poll_attempts,
@@ -530,20 +586,26 @@ class BydClient:
     ) -> RemoteControlResult:
         """Set seat heating/ventilation and steering wheel heating.
 
-        .. warning:: Non-functional — see :meth:`remote_control`.
-
         All heating/ventilation levels are 0=off, 1–3 for intensity.
         Steering wheel heating is 0=off, 1=on.
         """
-        any_active = any([
-            main_heat, main_ventilation,
-            copilot_heat, copilot_ventilation,
-            lr_seat_heat, lr_seat_ventilation,
-            rr_seat_heat, rr_seat_ventilation,
-            lr_third_heat, lr_third_ventilation,
-            rr_third_heat, rr_third_ventilation,
-            steering_wheel_heat,
-        ])
+        any_active = any(
+            [
+                main_heat,
+                main_ventilation,
+                copilot_heat,
+                copilot_ventilation,
+                lr_seat_heat,
+                lr_seat_ventilation,
+                rr_seat_heat,
+                rr_seat_ventilation,
+                lr_third_heat,
+                lr_third_ventilation,
+                rr_third_heat,
+                rr_third_ventilation,
+                steering_wheel_heat,
+            ]
+        )
         params = {
             "chairType": "5",
             "remoteMode": 1 if any_active else 0,
@@ -562,7 +624,8 @@ class BydClient:
             "steeringWheelHeatState": steering_wheel_heat,
         }
         return await self.remote_control(
-            vin, RemoteCommand.SEAT_CLIMATE,
+            vin,
+            RemoteCommand.SEAT_CLIMATE,
             control_params=params,
             command_pwd=command_pwd,
             poll_attempts=poll_attempts,
@@ -582,8 +645,6 @@ class BydClient:
     ) -> RemoteControlResult:
         """Enable or disable battery preheating.
 
-        .. warning:: Non-functional — see :meth:`remote_control`.
-
         Parameters
         ----------
         on : bool
@@ -591,7 +652,8 @@ class BydClient:
         """
         params = {"batteryHeat": 1 if on else 0}
         return await self.remote_control(
-            vin, RemoteCommand.BATTERY_HEAT,
+            vin,
+            RemoteCommand.BATTERY_HEAT,
             control_params=params,
             command_pwd=command_pwd,
             poll_attempts=poll_attempts,
@@ -617,7 +679,7 @@ class BydClient:
         """
         session = self._require_session()
         transport = self._require_transport()
-        return await fetch_hvac_status(self._config, session, transport, vin)
+        return await fetch_hvac_status(self._config, session, transport, vin, cache=self._cache)
 
     async def get_charging_status(self, vin: str) -> ChargingStatus:
         """Fetch smart charging status (SOC, charge state, time-to-full).
@@ -636,4 +698,4 @@ class BydClient:
         """
         session = self._require_session()
         transport = self._require_transport()
-        return await fetch_charging_status(self._config, session, transport, vin)
+        return await fetch_charging_status(self._config, session, transport, vin, cache=self._cache)

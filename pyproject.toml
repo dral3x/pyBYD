@@ -64,6 +64,9 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+"src/pybyd/_version.py" = ["I", "UP"]
+
 [tool.black]
 line-length = 120
 target-version = ["py311"]
