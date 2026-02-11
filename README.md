@@ -10,6 +10,14 @@ definitions found in [TA2k/ioBroker.byd](https://github.com/TA2k/ioBroker.byd).
 
 **Status:** Alpha. The API surface may change before 1.0.
 
+## PLEASE READ FIRST!
+
+We are still working out the kinks, especially mapping states and setting up parsing. 
+
+Any help around this is grately appreciated, use the [test client](https://github.com/jkaberg/pyBYD#dump-all-data) to fetch the car values and send an PR. 
+
+Thanks!
+
 ## Requirements
 
 - Python 3.11+
@@ -135,16 +143,33 @@ ruff check .              # lint
 mypy src/pybyd            # type check
 ```
 
-## Test client
+## Dump all data
 
-A standalone script exercises all endpoints and prints the results:
+A standalone script fetches every read-only endpoint and prints both
+the parsed model fields and the raw API JSON — useful for discovering
+unparsed fields or contributing new model coverage:
 
 ```bash
 export BYD_USERNAME="you@example.com"
 export BYD_PASSWORD="your-password"
-python scripts/test_client.py
-python scripts/test_client.py --skip-control   # skip remote commands
-python scripts/test_client.py --vin LNBX...    # specific vehicle
+
+# Human-readable output
+python scripts/dump_all.py
+
+# Only a specific vehicle
+python scripts/dump_all.py --vin LNBX...
+
+# Machine-readable JSON
+python scripts/dump_all.py --json
+
+# Save JSON to a file
+python scripts/dump_all.py --json -o dump.json
+
+# Skip specific endpoints
+python scripts/dump_all.py --skip-gps --skip-energy
+
+# Debug logging
+python scripts/dump_all.py -v
 ```
 
 ## Credits
