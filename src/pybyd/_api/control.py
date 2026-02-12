@@ -15,7 +15,8 @@ import json
 import logging
 import secrets
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from pybyd._api._envelope import build_token_outer_envelope
 from pybyd._constants import SESSION_EXPIRED_CODES
@@ -24,6 +25,8 @@ from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
 from pybyd.exceptions import (
     BydApiError,
+    BydControlPasswordError,
+    BydEndpointNotSupportedError,
     BydRateLimitError,
     BydRemoteControlError,
     BydSessionExpiredError,
@@ -32,6 +35,9 @@ from pybyd.models.control import ControlState, RemoteCommand, RemoteControlResul
 from pybyd.session import Session
 
 _logger = logging.getLogger(__name__)
+
+CONTROL_PASSWORD_ERROR_CODES: frozenset[str] = frozenset({"5005", "5006"})
+ENDPOINT_NOT_SUPPORTED_CODES: frozenset[str] = frozenset({"1001"})
 
 
 def _safe_int(value: Any) -> int | None:
@@ -211,6 +217,18 @@ async def _fetch_control_endpoint(
                 code=resp_code,
                 endpoint=endpoint,
             )
+        if resp_code in CONTROL_PASSWORD_ERROR_CODES:
+            raise BydControlPasswordError(
+                f"{endpoint} failed: code={resp_code} message={response.get('message', '')}",
+                code=resp_code,
+                endpoint=endpoint,
+            )
+        if resp_code in ENDPOINT_NOT_SUPPORTED_CODES:
+            raise BydEndpointNotSupportedError(
+                f"{endpoint} failed: code={resp_code} message={response.get('message', '')}",
+                code=resp_code,
+                endpoint=endpoint,
+            )
         raise BydApiError(
             f"{endpoint} failed: code={resp_code} message={response.get('message', '')}",
             code=resp_code,
@@ -352,7 +370,6 @@ async def _poll_remote_control_once(
 ) -> RemoteControlResult:
     """Single attempt: trigger + poll.  Raises on failure."""
     # Phase 1: Trigger request (with control params) — retry on 6024
-    last_rate_limit_exc: BydApiError | None = None
     for rate_attempt in range(1, rate_limit_retries + 1):
         try:
             result, serial = await _fetch_control_endpoint(
@@ -367,11 +384,9 @@ async def _poll_remote_control_once(
                 debug_recorder=debug_recorder,
                 phase="trigger",
             )
-            last_rate_limit_exc = None
             break
         except BydApiError as exc:
             if exc.code == "6024":
-                last_rate_limit_exc = exc
                 _logger.info(
                     "Remote control %s rate-limited (6024), retry %d/%d in %.1fs",
                     command.name,

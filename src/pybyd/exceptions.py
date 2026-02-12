@@ -70,6 +70,15 @@ class BydRemoteControlError(BydApiError):
     """Remote control command failed (controlState=2)."""
 
 
+class BydControlPasswordError(BydApiError):
+    """Remote control command rejected due invalid/locked operation password.
+
+    Covers BYD API codes such as:
+    - ``5005`` wrong operation password
+    - ``5006`` cloud control temporarily locked for the day
+    """
+
+
 class BydEndpointNotSupportedError(BydApiError):
     """Endpoint not supported for this vehicle/region (e.g. code 1001).
 

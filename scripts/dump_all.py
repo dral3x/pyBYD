@@ -34,7 +34,7 @@ import json
 import logging
 import sys
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -223,7 +223,7 @@ async def main() -> None:
 
     config = BydConfig.from_env()
     result: dict[str, Any] = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "app_version": config.app_version,
         "app_inner_version": config.app_inner_version,
         "vehicles": [],

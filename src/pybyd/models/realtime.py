@@ -132,7 +132,7 @@ class VehicleRealtimeData:
     # --- Connection & state ---
     online_state: OnlineState
     connect_state: ConnectState
-    vehicle_state: VehicleState
+    vehicle_state: VehicleState | int
     request_serial: str | None
 
     # --- Battery & range ---
@@ -168,8 +168,8 @@ class VehicleRealtimeData:
     """Driver-side set temperature for cabin A/C (integer)."""
     main_setting_temp_new: float | None
     """Driver-side set temperature (precise, °C)."""
-    air_run_state: AirCirculationMode | None
-    """Air circulation mode (0=external, 1=internal recirculation)."""
+    air_run_state: AirCirculationMode | int | None
+    """Air circulation mode (0=external, 1=internal; unknown values kept as int)."""
 
     # --- Seat heating/ventilation ---
     # Observed status scale: 0=off, 2=low, 3=high
