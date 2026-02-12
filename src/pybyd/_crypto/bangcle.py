@@ -135,7 +135,8 @@ class BangcleCodec:
                 raw = ref.read_bytes()
             except FileNotFoundError as exc:
                 raise BangcleTableLoadError(
-                    "bangcle_tables.bin not found in package data. Run: python scripts/convert_bangcle_tables.py"
+                    "bangcle_tables.bin not found in pybyd package data. "
+                    "Reinstall/upgrade pybyd so wheel data files are included."
                 ) from exc
 
         self._tables = _load_tables_from_bin(raw)
