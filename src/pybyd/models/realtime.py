@@ -39,6 +39,7 @@ class VehicleState(enum.IntEnum):
 
     STANDBY = 0
     ACTIVE = 1
+    UNKNOWN_2 = 2  # observed in payloads, semantics unclear
 
 
 class ChargingState(enum.IntEnum):
@@ -52,6 +53,7 @@ class ChargingState(enum.IntEnum):
 
     DISCONNECTED = -1
     NOT_CHARGING = 0
+    CHARGING = 1  # observed in chargeState, semantics: actively charging
     GUN_CONNECTED = 15
 
 
@@ -73,13 +75,15 @@ class DoorOpenState(enum.IntEnum):
 class LockState(enum.IntEnum):
     """Door lock state."""
 
-    LOCKED = 2
+    UNKNOWN = 0  # observed in stale/unready snapshot
     UNLOCKED = 1
+    LOCKED = 2
 
 
 class WindowState(enum.IntEnum):
     """Window open/closed state."""
 
+    UNKNOWN = 0  # observed in stale/unready snapshot
     CLOSED = 1
     OPEN = 2
 
@@ -91,6 +95,7 @@ class PowerGear(enum.IntEnum):
     as raw ``int`` via ``_to_enum``.
     """
 
+    UNKNOWN = 0  # observed in stale/unready snapshot
     PARKED = 1
     DRIVE = 3
 
@@ -104,11 +109,11 @@ class SeatHeatVentState(enum.IntEnum):
     - 3 = high
 
     Value ``1`` appears when the feature is available but inactive
-    (e.g. front seats while driving); it is not a defined member
-    and will be returned as a raw ``int`` by the parser.
+    (e.g. front seats while driving).
     """
 
     OFF = 0
+    INACTIVE_1 = 1  # observed, semantics: available but inactive
     LOW = 2
     HIGH = 3
 
@@ -118,6 +123,7 @@ class AirCirculationMode(enum.IntEnum):
 
     EXTERNAL = 0
     INTERNAL = 1
+    OUTSIDE_FRESH_2 = 2  # observed, semantics: outside air/fresh
 
 
 @dataclasses.dataclass(frozen=True)
@@ -173,7 +179,7 @@ class VehicleRealtimeData:
 
     # --- Seat heating/ventilation ---
     # Observed status scale: 0=off, 2=low, 3=high
-    # Value 1 = feature available but inactive (not a SeatHeatVentState member)
+    # Value 1 = feature available but inactive
     # (Note: command scale is different: 0=off, 1-3=levels)
     main_seat_heat_state: SeatHeatVentState | int | None
     """Driver seat heating level (0=off, 2=low, 3=high)."""

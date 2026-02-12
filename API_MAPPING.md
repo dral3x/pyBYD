@@ -68,7 +68,7 @@ Parser: `src/pybyd/_api/realtime.py`
 |---|---|---|---|---|
 | State | `onlineState` | `online_state` | `OnlineState` | 0=unknown (unconfirmed), 1=online (confirmed), 2=offline (unconfirmed) |
 | State | `connectState` | `connect_state` | `ConnectState` | -1=unknown (conflicting: seen while driving and online), 0=disconnected (unconfirmed), 1=connected (unconfirmed) |
-| State | `vehicleState` | `vehicle_state` | `VehicleState | int` | 0=standby (conflicting: seen while driving at 22 km/h), 1=active (unconfirmed), 2 observed (confirmed; kept as raw int) |
+| State | `vehicleState` | `vehicle_state` | `VehicleState | int` | 0=standby (conflicting: seen while driving at 22 km/h), 1=active (unconfirmed), 2=unknown_2 (confirmed) |
 | State | `requestSerial` | `request_serial` | `str | None` | poll serial token |
 | Battery | `elecPercent` | `elec_percent` | `float | None` | SOC 0-100 (confirmed) |
 | Battery | `powerBattery` | `power_battery` | `float | None` | alternative SOC field (unconfirmed) |
@@ -85,7 +85,7 @@ Parser: `src/pybyd/_api/realtime.py`
 | Climate | `mainSettingTemp` | `main_setting_temp` | `int | None` | cabin set temperature, integer (confirmed) |
 | Climate | `mainSettingTempNew` | `main_setting_temp_new` | `float | None` | cabin set temperature, precise C (unconfirmed) |
 | Climate | `airRunState` | `air_run_state` | `AirCirculationMode | int | None` | 0=external (legacy mapping), 1=internal recirculation (confirmed), 2=outside air / fresh (confirmed) |
-| Seats | `mainSeatHeatState` | `main_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed); value 1 observed and kept as raw int |
+| Seats | `mainSeatHeatState` | `main_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off, 1=inactive (confirmed), 2=low, 3=high (confirmed) |
 | Seats | `mainSeatVentilationState` | `main_seat_ventilation_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed) |
 | Seats | `copilotSeatHeatState` | `copilot_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed) |
 | Seats | `copilotSeatVentilationState` | `copilot_seat_ventilation_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed) |
@@ -187,9 +187,9 @@ Response wraps data under the `statusNow` key.
 | `frontDefrostStatus` | `front_defrost_status` | `int | None` | `1` observed (confirmed), likely on |
 | `electricDefrostStatus` | `electric_defrost_status` | `int | None` | `0` observed (confirmed) |
 | `wiperHeatStatus` | `wiper_heat_status` | `int | None` | `0` observed (confirmed) |
-| `mainSeatHeatState` | `main_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed); value `1` observed and kept as raw int |
+| `mainSeatHeatState` | `main_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off, 1=inactive (confirmed), 2=low, 3=high (confirmed) |
 | `mainSeatVentilationState` | `main_seat_ventilation_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed) |
-| `copilotSeatHeatState` | `copilot_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed); value `1` observed and kept as raw int |
+| `copilotSeatHeatState` | `copilot_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off, 1=inactive (confirmed), 2=low, 3=high (confirmed) |
 | `copilotSeatVentilationState` | `copilot_seat_ventilation_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed) |
 | `steeringWheelHeatState` | `steering_wheel_heat_state` | `SeatHeatVentState | int | None` | 0=off (confirmed), 1 observed (confirmed) |
 | `lrSeatHeatState` | `lr_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off (confirmed) |
@@ -263,7 +263,7 @@ Parser: `src/pybyd/_api/energy.py`
 | `electricityConsumption` | `electricity_consumption` | `float | None` | unconfirmed |
 | `fuelConsumption` | `fuel_consumption` | `float | None` | unconfirmed |
 
-Note: when the API returns error `1001`, the parser can synthesise partial data from the realtime cache.
+Note: when the API returns error `1001`, the client synthesises partial data from the realtime cache.
 
 ---
 
@@ -389,32 +389,32 @@ These reflect the enums currently implemented in `src/pybyd/models/realtime.py`.
 | `ConnectState` | 1 | `CONNECTED` | unconfirmed | |
 | `VehicleState` | 0 | `STANDBY` | conflicting | observed while driving at 22 km/h |
 | `VehicleState` | 1 | `ACTIVE` | unconfirmed | |
-| `VehicleState` | 2 | (not a member) | confirmed | observed in realtime payloads; parser keeps raw int |
+| `VehicleState` | 2 | `UNKNOWN_2` | confirmed | observed in realtime payloads |
 | `ChargingState` | -1 | `DISCONNECTED` | confirmed | |
 | `ChargingState` | 0 | `NOT_CHARGING` | confirmed | |
 | `ChargingState` | 15 | `GUN_CONNECTED` | confirmed | gun plugged in, charging not active |
-| `ChargingState` | 1 | (not a member) | confirmed | charging; observed on `chargeState`; parser keeps raw int |
-| `PowerGear` | 0 | (not a member) | confirmed | observed in stale/unready snapshot |
+| `ChargingState` | 1 | `CHARGING` | confirmed | charging; observed on `chargeState` |
+| `PowerGear` | 0 | `UNKNOWN` | confirmed | observed in stale/unready snapshot |
 | `PowerGear` | 1 | `PARKED` | confirmed | |
 | `PowerGear` | 3 | `DRIVE` | confirmed | |
 | `SeatHeatVentState` | 0 | `OFF` | confirmed | |
 | `SeatHeatVentState` | 2 | `LOW` | confirmed | |
 | `SeatHeatVentState` | 3 | `HIGH` | confirmed | |
-| `SeatHeatVentState` | 1 | (not a member) | confirmed | observed; parser keeps raw int |
+| `SeatHeatVentState` | 1 | `INACTIVE_1` | confirmed | observed inactive/available state |
 | `AirCirculationMode` | 0 | `EXTERNAL` | confirmed | |
 | `AirCirculationMode` | 1 | `INTERNAL` | confirmed | |
-| `AirCirculationMode` | 2 | (not a member) | confirmed | outside air / fresh; parser keeps raw int |
+| `AirCirculationMode` | 2 | `OUTSIDE_FRESH_2` | confirmed | outside air / fresh |
 | `TirePressureUnit` | 1 | `BAR` | confirmed | |
 | `TirePressureUnit` | 2 | `PSI` | unconfirmed | |
 | `TirePressureUnit` | 3 | `KPA` | unconfirmed | |
 | `WindowState` | 1 | `CLOSED` | confirmed | |
 | `WindowState` | 2 | `OPEN` | unconfirmed | |
-| `WindowState` | 0 | (not a member) | confirmed | observed in stale/unready snapshot |
+| `WindowState` | 0 | `UNKNOWN` | confirmed | observed in stale/unready snapshot |
 | `DoorOpenState` | 0 | `CLOSED` | confirmed | |
 | `DoorOpenState` | 1 | `OPEN` | unconfirmed | |
 | `LockState` | 2 | `LOCKED` | confirmed | |
 | `LockState` | 1 | `UNLOCKED` | confirmed | |
-| `LockState` | 0 | (not a member) | confirmed | observed in stale/unready snapshot |
+| `LockState` | 0 | `UNKNOWN` | confirmed | observed in stale/unready snapshot |
 | `ControlState` | 0 | `PENDING` | unconfirmed | |
 | `ControlState` | 1 | `SUCCESS` | unconfirmed | |
 | `ControlState` | 2 | `FAILURE` | unconfirmed | |

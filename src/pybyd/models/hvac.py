@@ -30,7 +30,7 @@ class HvacStatus:
     wind_position: int | None
     """Airflow direction."""
     cycle_choice: int | None
-    """Air recirculation (1=external, 2=recirculation)."""
+    """Air recirculation mode code (mapping still unconfirmed)."""
 
     # --- Temperature ---
     main_setting_temp: int | None
