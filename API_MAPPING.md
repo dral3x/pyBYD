@@ -31,6 +31,7 @@ URL base: https://dilinkappoversea-eu.byd.auto
 | `/control/getGpsInfoResult` | GPS poll | `src/pybyd/_api/gps.py` |
 | `/control/smartCharge/homePage` | Charging status | `src/pybyd/_api/charging.py` |
 | `/vehicleInfo/vehicle/getEnergyConsumption` | Energy consumption | `src/pybyd/_api/energy.py` |
+| `/vehicle/vehicleswitch/verifyControlPassword` | Verify remote-control PIN/password | `src/pybyd/_api/control.py` |
 | `/control/remoteControl` | Remote control trigger | `src/pybyd/_api/control.py` |
 | `/control/remoteControlResult` | Remote control poll | `src/pybyd/_api/control.py` |
 
@@ -304,6 +305,8 @@ Parser: `src/pybyd/_api/vehicles.py`
 
 ## Remote control
 
+URL (PIN verify): https://dilinkappoversea-eu.byd.auto/vehicle/vehicleswitch/verifyControlPassword
+
 URL (trigger): https://dilinkappoversea-eu.byd.auto/control/remoteControl
 
 URL (poll): https://dilinkappoversea-eu.byd.auto/control/remoteControlResult
@@ -311,6 +314,28 @@ URL (poll): https://dilinkappoversea-eu.byd.auto/control/remoteControlResult
 Model: `RemoteControlResult`
 
 Parser: `src/pybyd/_api/control.py`
+
+### PIN verify endpoint (`/vehicle/vehicleswitch/verifyControlPassword`)
+
+Observed request inner payload keys:
+
+| API field | Type | Values / notes |
+|---|---|---|
+| `commandPwd` | `str` | MD5 uppercase hex of 6-digit control PIN (confirmed) |
+| `deviceType` | `str` | e.g. `"0"` |
+| `functionType` | `str` | `"remoteControl"` |
+| `imeiMD5` | `str` | device identifier hash |
+| `networkType` | `str` | e.g. `"wifi"` |
+| `random` | `str` | random token |
+| `timeStamp` | `str` | epoch milliseconds |
+| `version` | `str` | app inner version |
+| `vin` | `str` | vehicle VIN |
+
+Observed behavior in pyBYD:
+
+- Verification is run once during initialization (`get_vehicles`) when `control_pin` is configured.
+- If verification fails (`5005` / `5006`), pyBYD disables remote commands for the client instance to avoid repeated failed calls.
+- pyBYD does not re-verify before each remote command.
 
 ### Command types
 
