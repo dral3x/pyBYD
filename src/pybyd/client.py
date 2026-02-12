@@ -783,6 +783,15 @@ class BydClient:
                 result,
                 control_params=control_params,
             )
+        except BydRemoteControlError:
+            # controlState=2 — the command was sent to the vehicle and
+            # the car likely acted on it, but cloud polling reported
+            # failure.  Apply optimistic cache updates so that the next
+            # data read reflects the expected state.
+            self._apply_optimistic_command_state(
+                vin, command, control_params=control_params,
+            )
+            raise
         except BydEndpointNotSupportedError:
             self._mark_control_unsupported(vin, command)
             raise
@@ -815,6 +824,11 @@ class BydClient:
                     result,
                     control_params=control_params,
                 )
+            except BydRemoteControlError:
+                self._apply_optimistic_command_state(
+                    vin, command, control_params=control_params,
+                )
+                raise
             except BydEndpointNotSupportedError:
                 self._mark_control_unsupported(vin, command)
                 raise

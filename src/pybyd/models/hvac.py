@@ -102,8 +102,17 @@ class HvacStatus:
 
     @property
     def is_ac_on(self) -> bool:
-        """Whether the A/C is currently running."""
-        return self.ac_switch == 1
+        """Whether the A/C is currently running.
+
+        Checks both ``ac_switch`` (manual on) and ``status`` (remote-start
+        sets ``status=2`` without flipping ``acSwitch``).
+        """
+        if self.ac_switch == 1:
+            return True
+        # Remote climate start sets status=2 while acSwitch stays 0
+        if self.status is not None and self.status >= 2:
+            return True
+        return False
 
     @property
     def interior_temp_available(self) -> bool:
