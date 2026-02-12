@@ -405,3 +405,7 @@ Realtime examples (not exhaustively maintained):
 |---|---|---|
 | `rate` | `-999` | possibly charging rate (unconfirmed) |
 | `lessOneMin` | `false` | possibly time-to-full flag (unconfirmed) |
+| `gl` | `double` | unknown (unconfirmed) |
+| `ins` | `int` | unknown (unconfirmed) |
+| `totalConsumptionEn` | `string` | unknown label/text field (unconfirmed) |
+| `energyConsumption` | `string` | unknown consumption field (unconfirmed) |
