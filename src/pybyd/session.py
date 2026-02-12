@@ -16,7 +16,7 @@ DEFAULT_SESSION_TTL: float = 12 * 3600
 
 @dataclasses.dataclass
 class Session:
-    """Mutable session state after successful login.
+    """Mutable session state after successful login..
 
     Parameters
     ----------
