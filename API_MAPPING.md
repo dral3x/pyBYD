@@ -80,11 +80,11 @@ Parser: `src/pybyd/_api/realtime.py`
 | Odometer | `totalMileageV2` | `total_mileage_v2` | `float | None` | km (unconfirmed) |
 | Odometer | `totalMileageV2Unit` | `total_mileage_v2_unit` | `str | None` | "km" (confirmed) |
 | Driving | `speed` | `speed` | `float | None` | km/h (confirmed) |
-| Driving | `powerGear` | `power_gear` | `PowerGear | None` | 1=parked (confirmed), 3=drive (confirmed) |
+| Driving | `powerGear` | `power_gear` | `PowerGear | int | None` | 1=parked (confirmed), 3=drive (confirmed), value `0` observed in stale/unready snapshots |
 | Climate | `tempInCar` | `temp_in_car` | `float | None` | interior temp in C; -129 means unavailable (confirmed) |
 | Climate | `mainSettingTemp` | `main_setting_temp` | `int | None` | cabin set temperature, integer (confirmed) |
 | Climate | `mainSettingTempNew` | `main_setting_temp_new` | `float | None` | cabin set temperature, precise C (unconfirmed) |
-| Climate | `airRunState` | `air_run_state` | `AirCirculationMode | int | None` | 0=external (confirmed), 1=internal recirculation (confirmed), 2 observed (confirmed; kept as raw int) |
+| Climate | `airRunState` | `air_run_state` | `AirCirculationMode | int | None` | 0=external (legacy mapping), 1=internal recirculation (confirmed), 2=outside air / fresh (confirmed) |
 | Seats | `mainSeatHeatState` | `main_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed); value 1 observed and kept as raw int |
 | Seats | `mainSeatVentilationState` | `main_seat_ventilation_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed) |
 | Seats | `copilotSeatHeatState` | `copilot_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed) |
@@ -95,7 +95,7 @@ Parser: `src/pybyd/_api/realtime.py`
 | Seats | `rrSeatHeatState` | `rr_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off (confirmed) |
 | Seats | `rrSeatVentilationState` | `rr_seat_ventilation_state` | `SeatHeatVentState | int | None` | 0=off (confirmed) |
 | Charging | `chargingState` | `charging_state` | `ChargingState | int` | -1=disconnected (confirmed), 0=not charging (confirmed), 15=gun plugged in not charging (confirmed) |
-| Charging | `chargeState` | `charge_state` | `ChargingState | int | None` | -1=disconnected (confirmed), 15=gun plugged in not charging (confirmed) |
+| Charging | `chargeState` | `charge_state` | `ChargingState | int | None` | -1=disconnected (confirmed), 1=charging (confirmed), 15=gun plugged in not charging (confirmed) |
 | Charging | `waitStatus` | `wait_status` | `int | None` | charge wait status (unconfirmed) |
 | Charging | `fullHour` | `full_hour` | `int | None` | hours to full; -1 means not available (confirmed) |
 | Charging | `fullMinute` | `full_minute` | `int | None` | minutes to full; -1 means not available (confirmed) |
@@ -111,16 +111,16 @@ Parser: `src/pybyd/_api/realtime.py`
 | Doors | `trunkLid` / `backCover` | `trunk_lid` | `DoorOpenState | None` | uses `trunkLid` first, falls back to `backCover`; 0=closed (confirmed), 1=open (unconfirmed) |
 | Doors | `slidingDoor` | `sliding_door` | `DoorOpenState | None` | 0=closed (confirmed), 1=open (unconfirmed) |
 | Doors | `forehold` | `forehold` | `DoorOpenState | None` | frunk; 0=closed (confirmed), 1=open (unconfirmed) |
-| Locks | `leftFrontDoorLock` | `left_front_door_lock` | `LockState | None` | 2=locked (confirmed), 1=unlocked (confirmed) |
-| Locks | `rightFrontDoorLock` | `right_front_door_lock` | `LockState | None` | 2=locked (confirmed), 1=unlocked (confirmed) |
-| Locks | `leftRearDoorLock` | `left_rear_door_lock` | `LockState | None` | 2=locked (confirmed), 1=unlocked (confirmed) |
-| Locks | `rightRearDoorLock` | `right_rear_door_lock` | `LockState | None` | 2=locked (confirmed), 1=unlocked (confirmed) |
-| Locks | `slidingDoorLock` | `sliding_door_lock` | `LockState | None` | 2=locked (confirmed), 1=unlocked (confirmed) |
-| Windows | `leftFrontWindow` | `left_front_window` | `WindowState | None` | 1=closed (confirmed), 2=open (unconfirmed) |
-| Windows | `rightFrontWindow` | `right_front_window` | `WindowState | None` | 1=closed (confirmed), 2=open (unconfirmed) |
-| Windows | `leftRearWindow` | `left_rear_window` | `WindowState | None` | 1=closed (confirmed), 2=open (unconfirmed) |
-| Windows | `rightRearWindow` | `right_rear_window` | `WindowState | None` | 1=closed (confirmed), 2=open (unconfirmed) |
-| Windows | `skylight` | `skylight` | `WindowState | None` | 1=closed (confirmed), 2=open (unconfirmed) |
+| Locks | `leftFrontDoorLock` | `left_front_door_lock` | `LockState | int | None` | 2=locked (confirmed), 1=unlocked (confirmed), value `0` seen in stale/unready snapshots |
+| Locks | `rightFrontDoorLock` | `right_front_door_lock` | `LockState | int | None` | 2=locked (confirmed), 1=unlocked (confirmed), value `0` seen in stale/unready snapshots |
+| Locks | `leftRearDoorLock` | `left_rear_door_lock` | `LockState | int | None` | 2=locked (confirmed), 1=unlocked (confirmed), value `0` seen in stale/unready snapshots |
+| Locks | `rightRearDoorLock` | `right_rear_door_lock` | `LockState | int | None` | 2=locked (confirmed), 1=unlocked (confirmed), value `0` seen in stale/unready snapshots |
+| Locks | `slidingDoorLock` | `sliding_door_lock` | `LockState | int | None` | 2=locked (confirmed), 1=unlocked (confirmed), value `0` seen in stale/unready snapshots |
+| Windows | `leftFrontWindow` | `left_front_window` | `WindowState | int | None` | 1=closed (confirmed), 2=open (unconfirmed), value `0` seen in stale/unready snapshots |
+| Windows | `rightFrontWindow` | `right_front_window` | `WindowState | int | None` | 1=closed (confirmed), 2=open (unconfirmed), value `0` seen in stale/unready snapshots |
+| Windows | `leftRearWindow` | `left_rear_window` | `WindowState | int | None` | 1=closed (confirmed), 2=open (unconfirmed), value `0` seen in stale/unready snapshots |
+| Windows | `rightRearWindow` | `right_rear_window` | `WindowState | int | None` | 1=closed (confirmed), 2=open (unconfirmed), value `0` seen in stale/unready snapshots |
+| Windows | `skylight` | `skylight` | `WindowState | int | None` | 1=closed (confirmed), 2=open (unconfirmed), value `0` seen in stale/unready snapshots |
 | Tires | `leftFrontTirepressure` | `left_front_tire_pressure` | `float | None` | pressure value in unit given by `tirePressUnit` (confirmed) |
 | Tires | `rightFrontTirepressure` | `right_front_tire_pressure` | `float | None` | pressure value in unit given by `tirePressUnit` (confirmed) |
 | Tires | `leftRearTirepressure` | `left_rear_tire_pressure` | `float | None` | pressure value in unit given by `tirePressUnit` (confirmed) |
@@ -129,7 +129,7 @@ Parser: `src/pybyd/_api/realtime.py`
 | Tires | `rightFrontTireStatus` | `right_front_tire_status` | `int | None` | 0=normal (confirmed) |
 | Tires | `leftRearTireStatus` | `left_rear_tire_status` | `int | None` | 0=normal (confirmed) |
 | Tires | `rightRearTireStatus` | `right_rear_tire_status` | `int | None` | 0=normal (confirmed) |
-| Tires | `tirePressUnit` | `tire_press_unit` | `TirePressureUnit | None` | 1=bar (confirmed), 2=psi (unconfirmed), 3=kPa (unconfirmed) |
+| Tires | `tirePressUnit` | `tire_press_unit` | `TirePressureUnit | None` | 1=bar (confirmed), 2=psi (unconfirmed), 3=kPa (unconfirmed; seen in stale/unready snapshot) |
 | Tires | `tirepressureSystem` | `tirepressure_system` | `int | None` | TPMS system state (unconfirmed) |
 | Tires | `rapidTireLeak` | `rapid_tire_leak` | `int | None` | 0=no leak (confirmed) |
 | Energy | `totalPower` | `total_power` | `float | None` | total power (unconfirmed) |
@@ -137,8 +137,8 @@ Parser: `src/pybyd/_api/realtime.py`
 | Energy | `nearestEnergyConsumption` | `nearest_energy_consumption` | `str | None` | string; "--" when unavailable (confirmed) |
 | Energy | `nearestEnergyConsumptionUnit` | `nearest_energy_consumption_unit` | `str | None` | unit string (unconfirmed) |
 | Energy | `recent50kmEnergy` | `recent_50km_energy` | `str | None` | string; "--" when unavailable (confirmed) |
-| Fuel | `oilEndurance` | `oil_endurance` | `float | None` | -1 means not applicable for EV (confirmed) |
-| Fuel | `oilPercent` | `oil_percent` | `float | None` | 0 for EV (confirmed) |
+| Fuel | `oilEndurance` | `oil_endurance` | `float | None` | on EV captures: `0` appears in stale/not-ready snapshots (`onlineState=0`, `time=0`), `-1` appears once realtime is ready (likely N/A) |
+| Fuel | `oilPercent` | `oil_percent` | `float | None` | on EV captures: `0` appears in stale/not-ready snapshots (`onlineState=0`, `time=0`), `-1` appears once realtime is ready (likely N/A) |
 | Fuel | `totalOil` | `total_oil` | `float | None` | 0 for EV (confirmed) |
 | Warnings | `powerSystem` | `power_system` | `int | None` | 0=normal (confirmed) |
 | Warnings | `engineStatus` | `engine_status` | `int | None` | 0=off (confirmed) |
@@ -171,27 +171,27 @@ Response wraps data under the `statusNow` key.
 
 | API field | Python field | Type | Values / notes |
 |---|---|---|---|
-| `acSwitch` | `ac_switch` | `int | None` | 0=off, 1=on (unconfirmed) |
-| `status` | `status` | `int | None` | overall HVAC status (unconfirmed) |
-| `airConditioningMode` | `air_conditioning_mode` | `int | None` | mode (unconfirmed) |
-| `windMode` | `wind_mode` | `int | None` | fan mode (unconfirmed) |
+| `acSwitch` | `ac_switch` | `int | None` | 0=off, 1=on (confirmed) |
+| `status` | `status` | `int | None` | overall HVAC status; `2` observed while A/C active (confirmed) |
+| `airConditioningMode` | `air_conditioning_mode` | `int | None` | mode code; `1` observed (confirmed) |
+| `windMode` | `wind_mode` | `int | None` | fan mode code; `3` observed (confirmed) |
 | `windPosition` | `wind_position` | `int | None` | airflow direction (unconfirmed) |
-| `cycleChoice` | `cycle_choice` | `int | None` | 1=external circulation (confirmed) |
-| `mainSettingTemp` | `main_setting_temp` | `int | None` | set temp integer (unconfirmed) |
-| `mainSettingTempNew` | `main_setting_temp_new` | `float | None` | set temp C (unconfirmed) |
-| `copilotSettingTemp` | `copilot_setting_temp` | `int | None` | passenger set temp (unconfirmed) |
-| `copilotSettingTempNew` | `copilot_setting_temp_new` | `float | None` | passenger set temp C (unconfirmed) |
+| `cycleChoice` | `cycle_choice` | `int | None` | `2` observed in live capture (confirmed); exact mapping still unconfirmed |
+| `mainSettingTemp` | `main_setting_temp` | `int | None` | set temp integer (confirmed) |
+| `mainSettingTempNew` | `main_setting_temp_new` | `float | None` | set temp C (confirmed) |
+| `copilotSettingTemp` | `copilot_setting_temp` | `int | None` | passenger set temp (confirmed) |
+| `copilotSettingTempNew` | `copilot_setting_temp_new` | `float | None` | passenger set temp C (confirmed) |
 | `tempInCar` | `temp_in_car` | `float | None` | interior C; -129 means unavailable (confirmed) |
-| `tempOutCar` | `temp_out_car` | `float | None` | exterior C (unconfirmed) |
+| `tempOutCar` | `temp_out_car` | `float | None` | exterior C (confirmed) |
 | `whetherSupportAdjustTemp` | `whether_support_adjust_temp` | `int | None` | 1=supported (confirmed) |
-| `frontDefrostStatus` | `front_defrost_status` | `int | None` | 0=off (unconfirmed) |
-| `electricDefrostStatus` | `electric_defrost_status` | `int | None` | 0=off (unconfirmed) |
-| `wiperHeatStatus` | `wiper_heat_status` | `int | None` | 0=off (unconfirmed) |
-| `mainSeatHeatState` | `main_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed) |
+| `frontDefrostStatus` | `front_defrost_status` | `int | None` | `1` observed (confirmed), likely on |
+| `electricDefrostStatus` | `electric_defrost_status` | `int | None` | `0` observed (confirmed) |
+| `wiperHeatStatus` | `wiper_heat_status` | `int | None` | `0` observed (confirmed) |
+| `mainSeatHeatState` | `main_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed); value `1` observed and kept as raw int |
 | `mainSeatVentilationState` | `main_seat_ventilation_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed) |
-| `copilotSeatHeatState` | `copilot_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed) |
+| `copilotSeatHeatState` | `copilot_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed); value `1` observed and kept as raw int |
 | `copilotSeatVentilationState` | `copilot_seat_ventilation_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed) |
-| `steeringWheelHeatState` | `steering_wheel_heat_state` | `SeatHeatVentState | int | None` | 0=off (confirmed), 1 observed (unconfirmed) |
+| `steeringWheelHeatState` | `steering_wheel_heat_state` | `SeatHeatVentState | int | None` | 0=off (confirmed), 1 observed (confirmed) |
 | `lrSeatHeatState` | `lr_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off (confirmed) |
 | `lrSeatVentilationState` | `lr_seat_ventilation_state` | `SeatHeatVentState | int | None` | 0=off (confirmed) |
 | `rrSeatHeatState` | `rr_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off (confirmed) |
@@ -199,9 +199,9 @@ Response wraps data under the `statusNow` key.
 | `rapidIncreaseTempState` | `rapid_increase_temp_state` | `int | None` | 0=off (confirmed) |
 | `rapidDecreaseTempState` | `rapid_decrease_temp_state` | `int | None` | 0=off (confirmed) |
 | `refrigeratorState` | `refrigerator_state` | `int | None` | 0=off (confirmed) |
-| `refrigeratorDoorState` | `refrigerator_door_state` | `int | None` | 0=closed (confirmed) |
-| `pm` | `pm` | `int | None` | PM2.5 value (unconfirmed) |
-| `pm25StateOutCar` | `pm25_state_out_car` | `int | None` | outside PM2.5 state (unconfirmed) |
+| `refrigeratorDoorState` | `refrigerator_door_state` | `int | None` | 0=closed (confirmed); `-1` also observed (likely unsupported on some vehicles) |
+| `pm` | `pm` | `int | None` | PM2.5 value; `0` observed (confirmed) |
+| `pm25StateOutCar` | `pm25_state_out_car` | `int | None` | outside PM2.5 state; `0` observed (confirmed) |
 
 ---
 
@@ -236,8 +236,6 @@ Model: `GpsInfo`
 
 Parser: `src/pybyd/_api/gps.py`
 
-Note: the parser accepts multiple aliases for some fields.
-
 | API field (aliases) | Python field | Type | Values / notes |
 |---|---|---|---|
 | `latitude` / `lat` / `gpsLatitude` | `latitude` | `float | None` | degrees (confirmed) |
@@ -245,7 +243,7 @@ Note: the parser accepts multiple aliases for some fields.
 | `speed` / `gpsSpeed` | `speed` | `float | None` | km/h (unconfirmed) |
 | `direction` / `heading` / `course` | `direction` | `float | None` | degrees 0-360 (confirmed) |
 | `gpsTimeStamp` / `gpsTimestamp` / `gpsTime` / `time` / `uploadTime` | `gps_timestamp` | `int | None` | epoch seconds (confirmed) |
-| `requestSerial` | `request_serial` | `str | None` | poll serial token (unconfirmed) |
+| `requestSerial` | `request_serial` | `str | None` | poll serial token (confirmed) |
 
 ---
 
@@ -279,27 +277,27 @@ Parser: `src/pybyd/_api/vehicles.py`
 
 | API field | Python field | Type | Values / notes |
 |---|---|---|---|
-| `vin` | `vin` | `str` | VIN |
-| `modelName` | `model_name` | `str` | model name (confirmed) |
-| `brandName` | `brand_name` | `str` | brand name (confirmed) |
-| `energyType` | `energy_type` | `str` | "0" for EV (confirmed) |
-| `autoAlias` | `auto_alias` | `str` | empty string when missing (unconfirmed) |
-| `autoPlate` | `auto_plate` | `str` | empty string when missing (unconfirmed) |
-| `picMainUrl` (or `cfPic.picMainUrl`) | `pic_main_url` | `str` | empty string when missing (unconfirmed) |
-| `picSetUrl` (or `cfPic.picSetUrl`) | `pic_set_url` | `str` | empty string when missing (unconfirmed) |
-| `outModelType` | `out_model_type` | `str` | empty string when missing (unconfirmed) |
-| `totalMileage` | `total_mileage` | `float | None` | odometer (unconfirmed) |
-| `modelId` | `model_id` | `int | None` | internal model id (unconfirmed) |
-| `carType` | `car_type` | `int | None` | internal car type id (unconfirmed) |
-| `defaultCar` | `default_car` | `bool` | 1 maps to True (confirmed) |
-| `empowerType` | `empower_type` | `int | None` | 2=owner (confirmed), -1=shared user (confirmed) |
-| `permissionStatus` | `permission_status` | `int | None` | 2 observed for full permissions (confirmed) |
-| `tboxVersion` | `tbox_version` | `str` | empty string when missing; e.g. "3" (unconfirmed) |
-| `vehicleState` | `vehicle_state` | `str` | empty string when missing; e.g. "1" (unconfirmed) |
-| `autoBoughtTime` | `auto_bought_time` | `int | None` | epoch ms (unconfirmed) |
-| `yunActiveTime` | `yun_active_time` | `int | None` | epoch ms (unconfirmed) |
-| `empowerId` | `empower_id` | `int | None` | empower relationship id (confirmed) |
-| `rangeDetailList` | `range_detail_list` | `list[EmpowerRange]` | permission scopes (confirmed) |
+| `vin` | `vin` | `str` | vehicle identification number (VIN) (confirmed) |
+| `modelName` | `model_name` | `str` | vehicle model display name (confirmed) |
+| `brandName` | `brand_name` | `str` | brand/manufacturer display name (confirmed) |
+| `energyType` | `energy_type` | `str` | propulsion type code (`"0"` = EV) (confirmed) |
+| `autoAlias` | `auto_alias` | `str` | user-facing vehicle alias; empty string when missing (confirmed) |
+| `autoPlate` | `auto_plate` | `str` | plate/registration label; empty string when missing (confirmed) |
+| `picMainUrl` (or `cfPic.picMainUrl`) | `pic_main_url` | `str` | main vehicle image URL; empty string when missing (confirmed) |
+| `picSetUrl` (or `cfPic.picSetUrl`) | `pic_set_url` | `str` | alternate/gallery image URL; empty string when missing (confirmed) |
+| `outModelType` | `out_model_type` | `str` | marketing model label; empty string when missing (confirmed) |
+| `totalMileage` | `total_mileage` | `float | None` | odometer value (km) (confirmed) |
+| `modelId` | `model_id` | `int | None` | internal model code (confirmed) |
+| `carType` | `car_type` | `int | None` | internal car type/class code (confirmed) |
+| `defaultCar` | `default_car` | `bool` | default vehicle flag (`1` -> `True`) (confirmed) |
+| `empowerType` | `empower_type` | `int | None` | user-vehicle relationship type (`2` owner, `-1` shared/delegated user) (confirmed) |
+| `permissionStatus` | `permission_status` | `int | None` | permission level/status code; check `rangeDetailList` for actual granted scopes (confirmed; semantics unconfirmed) |
+| `tboxVersion` | `tbox_version` | `str` | telematics box version string; empty string when missing (confirmed) |
+| `vehicleState` | `vehicle_state` | `str` | list-level vehicle state code (confirmed; semantics unconfirmed) |
+| `autoBoughtTime` | `auto_bought_time` | `int | None` | purchase timestamp in epoch milliseconds (confirmed) |
+| `yunActiveTime` | `yun_active_time` | `int | None` | cloud activation timestamp in epoch milliseconds (confirmed) |
+| `empowerId` | `empower_id` | `int | None` | account-vehicle empower relationship id (confirmed) |
+| `rangeDetailList` | `range_detail_list` | `list[EmpowerRange]` | hierarchical permission scope tree (capability modules/functions) (confirmed) |
 
 ---
 
@@ -395,6 +393,8 @@ These reflect the enums currently implemented in `src/pybyd/models/realtime.py`.
 | `ChargingState` | -1 | `DISCONNECTED` | confirmed | |
 | `ChargingState` | 0 | `NOT_CHARGING` | confirmed | |
 | `ChargingState` | 15 | `GUN_CONNECTED` | confirmed | gun plugged in, charging not active |
+| `ChargingState` | 1 | (not a member) | confirmed | charging; observed on `chargeState`; parser keeps raw int |
+| `PowerGear` | 0 | (not a member) | confirmed | observed in stale/unready snapshot |
 | `PowerGear` | 1 | `PARKED` | confirmed | |
 | `PowerGear` | 3 | `DRIVE` | confirmed | |
 | `SeatHeatVentState` | 0 | `OFF` | confirmed | |
@@ -403,16 +403,18 @@ These reflect the enums currently implemented in `src/pybyd/models/realtime.py`.
 | `SeatHeatVentState` | 1 | (not a member) | confirmed | observed; parser keeps raw int |
 | `AirCirculationMode` | 0 | `EXTERNAL` | confirmed | |
 | `AirCirculationMode` | 1 | `INTERNAL` | confirmed | |
-| `AirCirculationMode` | 2 | (not a member) | confirmed | observed in realtime payloads; parser keeps raw int |
+| `AirCirculationMode` | 2 | (not a member) | confirmed | outside air / fresh; parser keeps raw int |
 | `TirePressureUnit` | 1 | `BAR` | confirmed | |
 | `TirePressureUnit` | 2 | `PSI` | unconfirmed | |
 | `TirePressureUnit` | 3 | `KPA` | unconfirmed | |
-| `WindowState` | 0 | `OPEN` | unconfirmed | |
 | `WindowState` | 1 | `CLOSED` | confirmed | |
+| `WindowState` | 2 | `OPEN` | unconfirmed | |
+| `WindowState` | 0 | (not a member) | confirmed | observed in stale/unready snapshot |
 | `DoorOpenState` | 0 | `CLOSED` | confirmed | |
 | `DoorOpenState` | 1 | `OPEN` | unconfirmed | |
-| `LockState` | 0 | `LOCKED` | unconfirmed | |
+| `LockState` | 2 | `LOCKED` | confirmed | |
 | `LockState` | 1 | `UNLOCKED` | confirmed | |
+| `LockState` | 0 | (not a member) | confirmed | observed in stale/unready snapshot |
 | `ControlState` | 0 | `PENDING` | unconfirmed | |
 | `ControlState` | 1 | `SUCCESS` | unconfirmed | |
 | `ControlState` | 2 | `FAILURE` | unconfirmed | |
@@ -428,9 +430,11 @@ Realtime examples (not exhaustively maintained):
 
 | API field | Observed value | Notes |
 |---|---|---|
-| `rate` | `-999` | possibly charging rate (unconfirmed) |
+| `rate` | `-9`, `0` | possibly charging rate/sentinel (unconfirmed) |
 | `lessOneMin` | `false` | possibly time-to-full flag (unconfirmed) |
-| `gl` | `double` | unknown (unconfirmed) |
+| `repairModeSwitch` | `"0"` | mode flag (unconfirmed) |
+| `powerBatteryConnection` | `-1`, `0` | battery connectivity indicator (unconfirmed) |
+| `gl` | `9788.8`, `0` | unknown metric in realtime payload (unconfirmed) |
 | `ins` | `int` | unknown (unconfirmed) |
 | `totalConsumptionEn` | `string` | unknown label/text field (unconfirmed) |
 | `energyConsumption` | `string` | unknown consumption field (unconfirmed) |
