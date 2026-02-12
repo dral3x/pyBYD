@@ -16,7 +16,7 @@ import logging
 import secrets
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from pybyd._api._envelope import build_token_outer_envelope
 from pybyd._constants import SESSION_EXPIRED_CODES
@@ -162,7 +162,38 @@ async def verify_control_password(
     encrypted_inner = response.get("respondData")
     if not encrypted_inner:
         return {}
-    return json.loads(aes_decrypt_utf8(encrypted_inner, content_key))
+    decrypted_inner = aes_decrypt_utf8(encrypted_inner, content_key)
+    if not decrypted_inner or not decrypted_inner.strip():
+        raise BydControlPasswordError(
+            (
+                f"{VERIFY_CONTROL_PASSWORD_ENDPOINT} failed: "
+                "empty decrypted payload (invalid control PIN or cloud control locked)"
+            ),
+            code="5005",
+            endpoint=VERIFY_CONTROL_PASSWORD_ENDPOINT,
+        )
+
+    try:
+        parsed = json.loads(decrypted_inner)
+        if not isinstance(parsed, dict):
+            raise BydControlPasswordError(
+                (
+                    f"{VERIFY_CONTROL_PASSWORD_ENDPOINT} failed: "
+                    "unexpected decrypted payload shape (invalid control PIN or cloud control locked)"
+                ),
+                code="5005",
+                endpoint=VERIFY_CONTROL_PASSWORD_ENDPOINT,
+            )
+        return cast(dict[str, Any], parsed)
+    except json.JSONDecodeError as exc:
+        raise BydControlPasswordError(
+            (
+                f"{VERIFY_CONTROL_PASSWORD_ENDPOINT} failed: "
+                "invalid decrypted payload (invalid control PIN or cloud control locked)"
+            ),
+            code="5005",
+            endpoint=VERIFY_CONTROL_PASSWORD_ENDPOINT,
+        ) from exc
 
 
 def _is_remote_control_ready(data: dict[str, Any]) -> bool:
