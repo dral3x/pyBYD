@@ -26,7 +26,6 @@ from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
 from pybyd.exceptions import (
     BydApiError,
-    BydControlPasswordError,
     BydEndpointNotSupportedError,
     BydError,
     BydRateLimitError,
@@ -94,8 +93,6 @@ class BydClient:
         self._cache = VehicleDataCache()
         self._unsupported: dict[str, set[str]] = {}
         self._vehicle_permission_codes: dict[str, set[str]] = {}
-        self._control_password_checked = False
-        self._remote_control_disabled_error: BydControlPasswordError | None = None
         self._debug_recorder = debug_recorder
 
     @staticmethod
@@ -263,27 +260,6 @@ class BydClient:
             if isinstance(vehicle.raw, dict) and vehicle.vin:
                 self._cache.merge_vehicle(vehicle.vin, vehicle.raw)
                 self._vehicle_permission_codes[vehicle.vin] = self._flatten_permission_codes(vehicle)
-
-        if self._config.control_pin and not self._control_password_checked:
-            check_vin = next((vehicle.vin for vehicle in vehicles if vehicle.vin), None)
-            if check_vin:
-                try:
-                    await self.verify_control_password(check_vin)
-                except BydEndpointNotSupportedError:
-                    _logger.debug(
-                        "Control password verification endpoint not supported for %s",
-                        check_vin,
-                    )
-                except BydControlPasswordError as exc:
-                    self._remote_control_disabled_error = exc
-                    _logger.warning(
-                        (
-                            "Control PIN verification failed; remote commands are "
-                            "disabled to avoid repeated API failures (code %s)"
-                        ),
-                        exc.code,
-                    )
-            self._control_password_checked = True
         return vehicles
 
     async def get_vehicle_realtime(
@@ -505,7 +481,7 @@ class BydClient:
         return ""
 
     async def _verify_control_password(self, vin: str, resolved_pwd: str) -> bool:
-        """Verify control password for a VIN and cache disable-state on failure."""
+        """Verify control password for a VIN."""
         if not resolved_pwd:
             return False
 
@@ -532,11 +508,6 @@ class BydClient:
                 vin,
                 resolved_pwd,
             )
-        except BydControlPasswordError as exc:
-            self._remote_control_disabled_error = exc
-            raise
-
-        self._remote_control_disabled_error = None
         return True
 
     async def verify_control_password(
@@ -620,16 +591,6 @@ class BydClient:
                 f"Remote control command {command.name} is marked unsupported for {vin}",
                 code="1001",
                 endpoint="/control/remoteControl",
-            )
-        if self._remote_control_disabled_error is not None:
-            raise BydControlPasswordError(
-                "Remote control disabled: control PIN verification failed during initialization.",
-                code=self._remote_control_disabled_error.code,
-                endpoint=self._remote_control_disabled_error.endpoint,
-            )
-        if self._config.control_pin and not self._control_password_checked:
-            raise BydError(
-                "Remote control requires initialization check. Call get_vehicles() first to verify control PIN."
             )
 
         session = await self.ensure_session()

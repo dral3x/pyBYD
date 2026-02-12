@@ -331,9 +331,8 @@ Observed request inner payload keys:
 
 Observed behavior in pyBYD:
 
-- Verification is run once during initialization (`get_vehicles`) when `control_pin` is configured.
-- If verification fails (`5005` / `5006`), pyBYD disables remote commands for the client instance to avoid repeated failed calls.
-- pyBYD does not re-verify before each remote command.
+- pyBYD sends remote-control commands directly with `commandPwd` and relies on API responses for success/failure.
+- `verify_control_password(...)` is available as an explicit helper call but is not required before issuing commands.
 
 ### Command types
 
