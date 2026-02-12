@@ -116,6 +116,11 @@ parameters are configurable:
 result = await client.lock(vin, poll_attempts=15, poll_interval=2.0)
 ```
 
+On successful command completion, pyBYD applies an optimistic update to
+cached command-related fields (for example lock/window/climate/seat/battery-heat
+state). This allows integrations to reflect the desired target state
+immediately while waiting for the next backend telemetry refresh.
+
 If `control_pin` is configured, the client verifies it once via
 `/vehicle/vehicleswitch/verifyControlPassword` during initialization
 (`get_vehicles`). If verification fails, remote commands are disabled

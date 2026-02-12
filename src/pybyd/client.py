@@ -525,6 +525,170 @@ class BydClient:
         resolved_pwd = self._resolve_command_pwd(command_pwd)
         return await self._verify_control_password(vin, resolved_pwd)
 
+    def _optimistic_merge_realtime(self, vin: str, data: dict[str, Any]) -> None:
+        if not data:
+            return
+        payload = dict(data)
+        payload.setdefault("time", int(time.time()))
+        self._cache.merge_realtime(vin, payload)
+
+    def _optimistic_merge_hvac(self, vin: str, data: dict[str, Any]) -> None:
+        if not data:
+            return
+        payload = dict(data)
+        payload.setdefault("time", int(time.time()))
+        self._cache.merge_hvac(vin, payload)
+
+    def _optimistic_merge_charging(self, vin: str, data: dict[str, Any]) -> None:
+        if not data:
+            return
+        payload = dict(data)
+        payload.setdefault("updateTime", int(time.time()))
+        payload.setdefault("vin", vin)
+        self._cache.merge_charging(vin, payload)
+
+    def _apply_optimistic_command_state(
+        self,
+        vin: str,
+        command: RemoteCommand,
+        *,
+        control_params: dict[str, Any] | None = None,
+    ) -> None:
+        """Apply optimistic cache updates for successful remote commands."""
+        if command == RemoteCommand.LOCK:
+            self._optimistic_merge_realtime(
+                vin,
+                {
+                    "leftFrontDoorLock": 2,
+                    "rightFrontDoorLock": 2,
+                    "leftRearDoorLock": 2,
+                    "rightRearDoorLock": 2,
+                    "slidingDoorLock": 2,
+                },
+            )
+            return
+
+        if command == RemoteCommand.UNLOCK:
+            self._optimistic_merge_realtime(
+                vin,
+                {
+                    "leftFrontDoorLock": 1,
+                    "rightFrontDoorLock": 1,
+                    "leftRearDoorLock": 1,
+                    "rightRearDoorLock": 1,
+                    "slidingDoorLock": 1,
+                },
+            )
+            return
+
+        if command == RemoteCommand.CLOSE_WINDOWS:
+            self._optimistic_merge_realtime(
+                vin,
+                {
+                    "leftFrontWindow": 1,
+                    "rightFrontWindow": 1,
+                    "leftRearWindow": 1,
+                    "rightRearWindow": 1,
+                    "skylight": 1,
+                },
+            )
+            return
+
+        if command == RemoteCommand.START_CLIMATE:
+            params = control_params or {}
+            main_temp = params.get("mainSettingTemp")
+            copilot_temp = params.get("copilotSettingTemp")
+            cycle_mode = params.get("cycleMode")
+            hvac_patch: dict[str, Any] = {
+                "acSwitch": 1,
+                "status": 2,
+                "airConditioningMode": 1,
+            }
+            realtime_patch: dict[str, Any] = {}
+            if isinstance(main_temp, int):
+                hvac_patch["mainSettingTemp"] = main_temp
+                realtime_patch["mainSettingTemp"] = main_temp
+            if isinstance(copilot_temp, int):
+                hvac_patch["copilotSettingTemp"] = copilot_temp
+            if isinstance(cycle_mode, int):
+                hvac_patch["cycleChoice"] = cycle_mode
+                realtime_patch["airRunState"] = cycle_mode
+            self._optimistic_merge_hvac(vin, hvac_patch)
+            self._optimistic_merge_realtime(vin, realtime_patch)
+            return
+
+        if command == RemoteCommand.STOP_CLIMATE:
+            params = control_params or {}
+            main_temp = params.get("mainSettingTemp")
+            copilot_temp = params.get("copilotSettingTemp")
+            cycle_mode = params.get("cycleMode")
+            hvac_patch = {
+                "acSwitch": 0,
+                "status": 0,
+                "airConditioningMode": 0,
+            }
+            realtime_patch: dict[str, Any] = {}
+            if isinstance(main_temp, int):
+                hvac_patch["mainSettingTemp"] = main_temp
+                realtime_patch["mainSettingTemp"] = main_temp
+            if isinstance(copilot_temp, int):
+                hvac_patch["copilotSettingTemp"] = copilot_temp
+            if isinstance(cycle_mode, int):
+                hvac_patch["cycleChoice"] = cycle_mode
+                realtime_patch["airRunState"] = cycle_mode
+            self._optimistic_merge_hvac(vin, hvac_patch)
+            self._optimistic_merge_realtime(vin, realtime_patch)
+            return
+
+        if command == RemoteCommand.SEAT_CLIMATE:
+            params = control_params or {}
+            seat_field_map = {
+                "mainHeat": "mainSeatHeatState",
+                "mainVentilation": "mainSeatVentilationState",
+                "copilotHeat": "copilotSeatHeatState",
+                "copilotVentilation": "copilotSeatVentilationState",
+                "lrSeatHeatState": "lrSeatHeatState",
+                "lrSeatVentilationState": "lrSeatVentilationState",
+                "rrSeatHeatState": "rrSeatHeatState",
+                "rrSeatVentilationState": "rrSeatVentilationState",
+                "steeringWheelHeatState": "steeringWheelHeatState",
+            }
+            hvac_patch: dict[str, Any] = {}
+            realtime_patch: dict[str, Any] = {}
+            for source_key, target_key in seat_field_map.items():
+                value = params.get(source_key)
+                if isinstance(value, int):
+                    hvac_patch[target_key] = value
+                    realtime_patch[target_key] = value
+            if hvac_patch:
+                self._optimistic_merge_hvac(vin, hvac_patch)
+            if realtime_patch:
+                self._optimistic_merge_realtime(vin, realtime_patch)
+            return
+
+        if command == RemoteCommand.BATTERY_HEAT:
+            params = control_params or {}
+            battery_heat = params.get("batteryHeat")
+            if isinstance(battery_heat, int):
+                self._optimistic_merge_realtime(vin, {"batteryHeatState": battery_heat})
+
+    def _finalize_remote_control_result(
+        self,
+        vin: str,
+        command: RemoteCommand,
+        result: RemoteControlResult,
+        *,
+        control_params: dict[str, Any] | None = None,
+    ) -> RemoteControlResult:
+        """Apply post-command side effects before returning a result."""
+        if result.success:
+            self._apply_optimistic_command_state(
+                vin,
+                command,
+                control_params=control_params,
+            )
+        return result
+
     async def remote_control(
         self,
         vin: str,
@@ -597,7 +761,7 @@ class BydClient:
         transport = self._require_transport()
         resolved_pwd = self._resolve_command_pwd(command_pwd)
         try:
-            return await poll_remote_control(
+            result = await poll_remote_control(
                 self._config,
                 session,
                 transport,
@@ -613,6 +777,12 @@ class BydClient:
                 command_retry_delay=command_retry_delay,
                 debug_recorder=self._debug_recorder,
             )
+            return self._finalize_remote_control_result(
+                vin,
+                command,
+                result,
+                control_params=control_params,
+            )
         except BydEndpointNotSupportedError:
             self._mark_control_unsupported(vin, command)
             raise
@@ -623,7 +793,7 @@ class BydClient:
             self.invalidate_session()
             session = await self.ensure_session()
             try:
-                return await poll_remote_control(
+                result = await poll_remote_control(
                     self._config,
                     session,
                     transport,
@@ -638,6 +808,12 @@ class BydClient:
                     command_retries=command_retries,
                     command_retry_delay=command_retry_delay,
                     debug_recorder=self._debug_recorder,
+                )
+                return self._finalize_remote_control_result(
+                    vin,
+                    command,
+                    result,
+                    control_params=control_params,
                 )
             except BydEndpointNotSupportedError:
                 self._mark_control_unsupported(vin, command)
