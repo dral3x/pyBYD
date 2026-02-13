@@ -38,6 +38,8 @@ _logger = logging.getLogger(__name__)
 
 CONTROL_PASSWORD_ERROR_CODES: frozenset[str] = frozenset({"5005", "5006"})
 ENDPOINT_NOT_SUPPORTED_CODES: frozenset[str] = frozenset({"1001"})
+REMOTE_CONTROL_SERVICE_ERROR_CODES: frozenset[str] = frozenset({"1009"})
+REMOTE_CONTROL_ENDPOINTS: frozenset[str] = frozenset({"/control/remoteControl", "/control/remoteControlResult"})
 VERIFY_CONTROL_PASSWORD_ENDPOINT = "/vehicle/vehicleswitch/verifyControlPassword"
 
 
@@ -330,6 +332,12 @@ async def _fetch_control_endpoint(
             )
         if resp_code in ENDPOINT_NOT_SUPPORTED_CODES:
             raise BydEndpointNotSupportedError(
+                f"{endpoint} failed: code={resp_code} message={response.get('message', '')}",
+                code=resp_code,
+                endpoint=endpoint,
+            )
+        if endpoint in REMOTE_CONTROL_ENDPOINTS and resp_code in REMOTE_CONTROL_SERVICE_ERROR_CODES:
+            raise BydRemoteControlError(
                 f"{endpoint} failed: code={resp_code} message={response.get('message', '')}",
                 code=resp_code,
                 endpoint=endpoint,

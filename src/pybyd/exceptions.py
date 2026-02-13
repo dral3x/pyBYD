@@ -67,7 +67,12 @@ class BydSessionExpiredError(BydAuthenticationError):
 
 
 class BydRemoteControlError(BydApiError):
-    """Remote control command failed (controlState=2)."""
+    """Remote control command failed after being accepted by cloud.
+
+    This is raised for terminal control failures (``controlState=2``)
+    and for known remote-control service-level failures returned by
+    control endpoints (for example code ``1009``).
+    """
 
 
 class BydControlPasswordError(BydApiError):
