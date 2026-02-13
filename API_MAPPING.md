@@ -91,7 +91,7 @@ Parser: `src/pybyd/_api/realtime.py`
 |---|---|---|---|---|
 | State | `onlineState` | `online_state` | `OnlineState` | 0=unknown (unconfirmed), 1=online (confirmed), 2=offline (unconfirmed) |
 | State | `connectState` | `connect_state` | `ConnectState` | -1=unknown (conflicting: seen while driving and online), 0=disconnected (unconfirmed), 1=connected (unconfirmed) |
-| State | `vehicleState` | `vehicle_state` | `VehicleState | int` | 0=standby (conflicting: seen while driving at 22 km/h), 1=active (unconfirmed), 2=unknown_2 (confirmed) |
+| State | `vehicleState` | `vehicle_state` | `VehicleState | int` | 0=on (confirmed), 1=unknown_1 (unconfirmed), 2=off (confirmed) |
 | State | `requestSerial` | `request_serial` | `str | None` | poll serial token |
 | Battery | `elecPercent` | `elec_percent` | `float | None` | SOC 0-100 (confirmed) |
 | Battery | `powerBattery` | `power_battery` | `float | None` | alternative SOC field (unconfirmed) |

@@ -33,13 +33,22 @@ class ConnectState(enum.IntEnum):
 class VehicleState(enum.IntEnum):
     """Vehicle power state.
 
-    Note: observed as ``0`` even while the vehicle is actively driving,
-    so the semantics are unclear. Do not rely on this for on/off detection.
+    Observed realtime mapping:
+    - ``0`` = on
+    - ``2`` = off
+
+    Value ``1`` is still observed (e.g. in vehicle-list payloads), but
+    realtime semantics for that code remain unclear.
     """
 
-    STANDBY = 0
-    ACTIVE = 1
-    UNKNOWN_2 = 2  # observed in payloads, semantics unclear
+    ON = 0
+    UNKNOWN_1 = 1
+    OFF = 2
+
+    # Backward-compatible aliases
+    STANDBY = ON
+    ACTIVE = UNKNOWN_1
+    UNKNOWN_2 = OFF
 
 
 class ChargingState(enum.IntEnum):

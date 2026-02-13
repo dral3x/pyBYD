@@ -6,6 +6,7 @@ from pybyd._api.realtime import _parse_vehicle_info
 from pybyd._constants import SESSION_EXPIRED_CODES
 from pybyd.config import BydConfig
 from pybyd.models.charging import ChargingStatus
+from pybyd.models.realtime import VehicleState
 
 
 def test_session_expired_codes_include_1002() -> None:
@@ -27,6 +28,14 @@ def test_realtime_negative_charge_times_normalized_to_zero() -> None:
     assert realtime.full_minute == 0
     assert realtime.charge_remaining_hours == 0
     assert realtime.charge_remaining_minutes == 0
+
+
+def test_realtime_vehicle_state_mapping_on_and_off() -> None:
+    on_realtime = _parse_vehicle_info({"vehicleState": 0})
+    off_realtime = _parse_vehicle_info({"vehicleState": 2})
+
+    assert on_realtime.vehicle_state == VehicleState.ON
+    assert off_realtime.vehicle_state == VehicleState.OFF
 
 
 def test_charging_status_update_datetime_seconds() -> None:

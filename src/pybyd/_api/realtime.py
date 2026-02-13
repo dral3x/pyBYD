@@ -148,7 +148,7 @@ def _parse_vehicle_info(data: dict[str, Any]) -> VehicleRealtimeData:
         # Connection & state
         online_state=_to_enum(OnlineState, data.get("onlineState"), OnlineState.UNKNOWN),
         connect_state=_to_enum(ConnectState, data.get("connectState"), ConnectState.UNKNOWN),
-        vehicle_state=_to_enum(VehicleState, data.get("vehicleState"), VehicleState.STANDBY),
+        vehicle_state=_to_enum(VehicleState, data.get("vehicleState"), VehicleState.ON),
         request_serial=data.get("requestSerial"),
         # Battery & range
         elec_percent=_safe_float(data.get("elecPercent")),
