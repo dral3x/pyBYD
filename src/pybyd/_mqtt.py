@@ -220,18 +220,18 @@ class BydMqttRuntime:
             _properties: Any,
         ) -> None:
             if reason_code.value != 0:
-                self._logger.warning("MQTT connect failed: %s", reason_code)
+                self._logger.warning("MQTT connect failed reason=%s", reason_code)
                 return
-            self._logger.debug("MQTT connected successfully reason=%s", reason_code)
+            self._logger.debug("MQTT connected reason=%s", reason_code)
             if self._topic:
-                self._logger.debug("MQTT subscribing topic=%s", self._topic)
+                self._logger.debug("MQTT subscribe topic=%s", self._topic)
                 c.subscribe(self._topic, qos=0)
 
         def on_message(_c: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
             try:
                 layers = decode_mqtt_payload_layers(msg.payload, self._decrypt_key_hex)
                 self._logger.debug(
-                    "Received PUBLISH topic=%s parsed=%s",
+                    "MQTT publish received topic=%s parsed=%s",
                     msg.topic,
                     layers.parsed,
                 )
@@ -239,7 +239,7 @@ class BydMqttRuntime:
                 event_name = str(layers.parsed.get("event") or "")
                 vin_value = layers.parsed.get("vin")
                 vin = vin_value if isinstance(vin_value, str) and vin_value else None
-                self._logger.debug("MQTT payload decrypted event=%s vin=%s", event_name, vin)
+                self._logger.debug("MQTT payload decoded event=%s vin=%s", event_name, vin)
                 event = MqttEvent(
                     event=event_name,
                     vin=vin,
@@ -248,7 +248,7 @@ class BydMqttRuntime:
                 )
                 self._loop.call_soon_threadsafe(self._on_event, event)
             except Exception:
-                self._logger.debug("MQTT payload parse failure", exc_info=True)
+                self._logger.debug("MQTT payload parse failed", exc_info=True)
 
         def on_disconnect(
             _client: mqtt.Client,
@@ -258,7 +258,7 @@ class BydMqttRuntime:
             _properties: Any,
         ) -> None:
             if self._running:
-                self._logger.debug("MQTT disconnected: %s", reason_code)
+                self._logger.debug("MQTT disconnected reason=%s", reason_code)
 
         client.on_connect = on_connect
         client.on_message = on_message

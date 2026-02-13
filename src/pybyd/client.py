@@ -327,38 +327,38 @@ class BydClient:
         if event.event == "remoteControl":
             self._handle_mqtt_remote_control(event)
             return
-        _logger.debug("unknown payload via mqtt, should be included for parsing? event=%s", event.event)
+        _logger.debug("MQTT event ignored reason=unsupported_event event=%s", event.event)
 
     def _handle_mqtt_vehicle_info(self, event: MqttEvent) -> None:
         payload = event.payload
         data_obj = payload.get("data")
         if not isinstance(data_obj, dict):
-            _logger.debug("unknown payload via mqtt, should be included for parsing? event=vehicleInfo")
+            _logger.debug("MQTT event ignored reason=invalid_data event=vehicleInfo")
             return
         respond_data = data_obj.get("respondData")
         if not isinstance(respond_data, dict):
-            _logger.debug("unknown payload via mqtt, should be included for parsing? event=vehicleInfo")
+            _logger.debug("MQTT event ignored reason=invalid_respond_data event=vehicleInfo")
             return
 
         vin = event.vin
         if not vin:
-            _logger.debug("unknown payload via mqtt, should be included for parsing? event=vehicleInfo")
+            _logger.debug("MQTT event ignored reason=missing_vin event=vehicleInfo")
             return
 
-        _logger.debug("Applying MQTT vehicleInfo cache enrichment vin=%s keys=%s", vin, len(respond_data))
+        _logger.debug("MQTT cache merge kind=vehicle_info vin=%s keys=%s", vin, len(respond_data))
         self._cache.merge_realtime(vin, respond_data)
         self._notify_mqtt_vehicle_info(vin)
         hvac_patch = self._project_mqtt_hvac_patch(respond_data, vin)
         if hvac_patch:
-            _logger.debug("MQTT HVAC patch applied vin=%s keys=%s", vin, len(hvac_patch))
+            _logger.debug("MQTT cache merge kind=hvac vin=%s keys=%s", vin, len(hvac_patch))
             self._cache.merge_hvac(vin, hvac_patch)
         charging_patch = self._project_mqtt_charging_patch(respond_data, vin)
         if charging_patch:
-            _logger.debug("MQTT charging patch applied vin=%s keys=%s", vin, len(charging_patch))
+            _logger.debug("MQTT cache merge kind=charging vin=%s keys=%s", vin, len(charging_patch))
             self._cache.merge_charging(vin, charging_patch)
         energy_patch = self._project_mqtt_energy_patch(respond_data, vin)
         if energy_patch:
-            _logger.debug("MQTT energy patch applied vin=%s keys=%s", vin, len(energy_patch))
+            _logger.debug("MQTT cache merge kind=energy vin=%s keys=%s", vin, len(energy_patch))
             self._cache.merge_energy(vin, energy_patch)
 
     def _notify_mqtt_vehicle_info(self, vin: str) -> None:
@@ -381,13 +381,13 @@ class BydClient:
         if self._mqtt_vehicle_info_versions.get(vin, 0) != baseline_version:
             waiter.set()
 
-        _logger.debug("Waiting for MQTT vehicleInfo update vin=%s timeout=%.2fs", vin, timeout_seconds)
+        _logger.debug("MQTT wait start kind=vehicle_info vin=%s timeout_s=%.2f", vin, timeout_seconds)
         try:
             await asyncio.wait_for(waiter.wait(), timeout_seconds)
-            _logger.debug("MQTT vehicleInfo wait completed vin=%s", vin)
+            _logger.debug("MQTT wait completed kind=vehicle_info vin=%s", vin)
             return True
         except TimeoutError:
-            _logger.debug("MQTT vehicleInfo wait timed out vin=%s after %.2fs", vin, timeout_seconds)
+            _logger.debug("MQTT wait timeout kind=vehicle_info vin=%s timeout_s=%.2f", vin, timeout_seconds)
             return False
         finally:
             pending = self._mqtt_vehicle_info_waiters.get(vin)
@@ -399,13 +399,13 @@ class BydClient:
     def _resolve_mqtt_waiter(self, vin: str, result: RemoteControlResult) -> None:
         waiters = self._mqtt_command_waiters.get(vin)
         if not waiters:
-            _logger.debug("MQTT remoteControl result received without waiter vin=%s", vin)
+            _logger.debug("MQTT wait ignored kind=remote_control vin=%s reason=no_waiter", vin)
             return
         while waiters:
             waiter = waiters.pop(0)
             if waiter.done():
                 continue
-            _logger.debug("Resolving MQTT remoteControl waiter vin=%s success=%s", vin, result.success)
+            _logger.debug("MQTT wait resolved kind=remote_control vin=%s success=%s", vin, result.success)
             waiter.set_result(result)
             break
         if not waiters:
@@ -415,20 +415,20 @@ class BydClient:
         payload = event.payload
         data_obj = payload.get("data")
         if not isinstance(data_obj, dict):
-            _logger.debug("unknown payload via mqtt, should be included for parsing? event=remoteControl")
+            _logger.debug("MQTT event ignored reason=invalid_data event=remoteControl")
             return
         respond_data = data_obj.get("respondData")
         if not isinstance(respond_data, dict):
-            _logger.debug("unknown payload via mqtt, should be included for parsing? event=remoteControl")
+            _logger.debug("MQTT event ignored reason=invalid_respond_data event=remoteControl")
             return
 
         vin = event.vin
         if not vin:
-            _logger.debug("unknown payload via mqtt, should be included for parsing? event=remoteControl")
+            _logger.debug("MQTT event ignored reason=missing_vin event=remoteControl")
             return
 
         result = parse_remote_control_result_data(respond_data)
-        _logger.debug("MQTT remoteControl parsed vin=%s success=%s", vin, result.success)
+        _logger.debug("MQTT payload parsed event=remoteControl vin=%s success=%s", vin, result.success)
         self._resolve_mqtt_waiter(vin, result)
 
     async def _wait_for_mqtt_remote_result(
@@ -442,13 +442,13 @@ class BydClient:
         loop = self._loop or asyncio.get_running_loop()
         waiter: asyncio.Future[RemoteControlResult] = loop.create_future()
         self._mqtt_command_waiters.setdefault(vin, []).append(waiter)
-        _logger.debug("Waiting for MQTT remoteControl result vin=%s timeout=%.2fs", vin, timeout_seconds)
+        _logger.debug("MQTT wait start kind=remote_control vin=%s timeout_s=%.2f", vin, timeout_seconds)
         try:
             result = await asyncio.wait_for(waiter, timeout_seconds)
-            _logger.debug("MQTT wait completed vin=%s success=%s", vin, result.success)
+            _logger.debug("MQTT wait completed kind=remote_control vin=%s success=%s", vin, result.success)
             return result
         except TimeoutError:
-            _logger.debug("MQTT wait timed out vin=%s after %.2fs", vin, timeout_seconds)
+            _logger.debug("MQTT wait timeout kind=remote_control vin=%s timeout_s=%.2f", vin, timeout_seconds)
             return None
         finally:
             waiters = self._mqtt_command_waiters.get(vin)

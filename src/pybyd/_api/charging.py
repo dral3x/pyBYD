@@ -108,7 +108,7 @@ async def fetch_charging_status(
         )
 
     data = json.loads(aes_decrypt_utf8(response["respondData"], content_key))
-    _logger.debug("Charging status response keys=%s", list(data.keys()) if isinstance(data, dict) else [])
+    _logger.debug("Charging response decoded vin=%s keys=%s", vin, list(data.keys()) if isinstance(data, dict) else [])
     if cache is not None and isinstance(data, dict):
         data = cache.merge_charging(vin, data)
     return _parse_charging_status(data if isinstance(data, dict) else {})

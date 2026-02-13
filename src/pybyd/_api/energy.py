@@ -156,7 +156,7 @@ async def fetch_energy_consumption(
         )
 
     data = json.loads(aes_decrypt_utf8(response["respondData"], content_key))
-    _logger.debug("Energy consumption response keys=%s", list(data.keys()) if isinstance(data, dict) else [])
+    _logger.debug("Energy response decoded vin=%s keys=%s", vin, list(data.keys()) if isinstance(data, dict) else [])
     if cache is not None and isinstance(data, dict):
         data = cache.merge_energy(vin, data)
     return _parse_energy_consumption(data if isinstance(data, dict) else {})

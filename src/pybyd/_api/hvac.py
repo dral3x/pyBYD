@@ -159,7 +159,7 @@ async def fetch_hvac_status(
         )
 
     data = json.loads(aes_decrypt_utf8(response["respondData"], content_key))
-    _logger.debug("HVAC status response keys=%s", list(data.keys()) if isinstance(data, dict) else [])
+    _logger.debug("HVAC response decoded vin=%s keys=%s", vin, list(data.keys()) if isinstance(data, dict) else [])
     status = data.get("statusNow", data) if isinstance(data, dict) else {}
     if cache is not None and isinstance(status, dict):
         status = cache.merge_hvac(vin, status)

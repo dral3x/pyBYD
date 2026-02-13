@@ -377,7 +377,6 @@ async def poll_vehicle_realtime(
 
     if pre_poll_waiter is not None and pre_poll_wait_seconds > 0:
         try:
-            _logger.debug("Realtime waiting for MQTT update vin=%s timeout_s=%.2f", vin, pre_poll_wait_seconds)
             mqtt_updated = await pre_poll_waiter(vin, pre_poll_wait_seconds)
             if mqtt_updated:
                 if cache is not None:
