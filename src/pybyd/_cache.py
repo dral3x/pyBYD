@@ -17,7 +17,7 @@ def _is_meaningful(value: Any) -> bool:
         return False
     if value == []:
         return False
-    return value != {}
+    return bool(value != {})
 
 
 def _merge_dict(target: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:

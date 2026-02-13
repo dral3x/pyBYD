@@ -8,7 +8,7 @@ How to update this file:
 2. Compare the JSON outputs to identify which fields change and what the values mean.
 3. Update the tables below and (if needed) extend the parsers/models.
 
-Last updated: 2026-02-12
+Last updated: 2026-02-13
 
 Base URL: https://dilinkappoversea-eu.byd.auto
 
@@ -42,6 +42,29 @@ URL base: https://dilinkappoversea-eu.byd.auto
 - confirmed: verified by live captures
 - unconfirmed: plausible but not verified yet
 - conflicting: observed data contradicts the assumed meaning
+
+---
+
+## MQTT events (integrated)
+
+pyBYD consumes decrypted MQTT events from `oversea/res/<userId>` and uses
+them to enrich cache state between HTTP polls.
+
+Current integrated events:
+
+- `vehicleInfo`
+	- Source: `payload.data.respondData`
+	- Primary merge target: realtime cache (`VehicleDataCache.merge_realtime`)
+	- Additional projections:
+		- HVAC cache: temperature + seat/steering fields (+ `airRunState -> cycleChoice`)
+		- Charging cache: SOC/charging/connect/wait/full-time fields (`time -> updateTime`)
+		- Energy cache: `totalEnergy` and related consumption strings when present
+- `remoteControl`
+	- Source: `payload.data.respondData`
+	- Parsed using the same immediate/polled rules as HTTP control parser
+	- Used for MQTT-first command completion with HTTP polling fallback
+
+Unknown/unanticipated MQTT envelopes are ignored and logged at debug level.
 
 ## Parsing rules (current code)
 

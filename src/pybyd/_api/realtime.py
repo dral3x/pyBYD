@@ -61,6 +61,16 @@ def _safe_int(value: Any) -> int | None:
     return int(f)
 
 
+def _non_negative_or_zero(value: Any) -> int | None:
+    """Convert value to int, mapping negative sentinel values to zero."""
+    parsed = _safe_int(value)
+    if parsed is None:
+        return None
+    if parsed < 0:
+        return 0
+    return parsed
+
+
 def _build_realtime_inner(
     config: BydConfig,
     vin: str,
@@ -172,10 +182,10 @@ def _parse_vehicle_info(data: dict[str, Any]) -> VehicleRealtimeData:
         charging_state=_to_enum(ChargingState, data.get("chargingState"), ChargingState.DISCONNECTED),
         charge_state=_to_enum(ChargingState, data.get("chargeState")),
         wait_status=_safe_int(data.get("waitStatus")),
-        full_hour=_safe_int(data.get("fullHour")),
-        full_minute=_safe_int(data.get("fullMinute")),
-        charge_remaining_hours=_safe_int(data.get("remainingHours")),
-        charge_remaining_minutes=_safe_int(data.get("remainingMinutes")),
+        full_hour=_non_negative_or_zero(data.get("fullHour")),
+        full_minute=_non_negative_or_zero(data.get("fullMinute")),
+        charge_remaining_hours=_non_negative_or_zero(data.get("remainingHours")),
+        charge_remaining_minutes=_non_negative_or_zero(data.get("remainingMinutes")),
         booking_charge_state=_safe_int(data.get("bookingChargeState")),
         booking_charging_hour=_safe_int(data.get("bookingChargingHour")),
         booking_charging_minute=_safe_int(data.get("bookingChargingMinute")),

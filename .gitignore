@@ -40,6 +40,8 @@ Thumbs.db
 # Environment
 .env
 .claude
+CLAUDE.md
+.github/copilot-instructions.md
 
 # Test/coverage artifacts
 .coverage.*

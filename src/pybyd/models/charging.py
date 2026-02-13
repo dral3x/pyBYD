@@ -6,6 +6,7 @@ Mapped from ``/control/smartCharge/homePage`` response documented in API_MAPPING
 from __future__ import annotations
 
 import dataclasses
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -56,3 +57,13 @@ class ChargingStatus:
             and self.full_hour >= 0
             and self.full_minute >= 0
         )
+
+    @property
+    def update_datetime_utc(self) -> datetime | None:
+        """Return ``update_time`` as UTC datetime (supports seconds/ms epochs)."""
+        if self.update_time is None:
+            return None
+        timestamp = self.update_time
+        if timestamp > 1_000_000_000_000:
+            timestamp = int(timestamp / 1000)
+        return datetime.fromtimestamp(timestamp, tz=UTC)

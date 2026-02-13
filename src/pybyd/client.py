@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -10,7 +11,7 @@ from typing import Any
 import aiohttp
 
 from pybyd._api.charging import fetch_charging_status
-from pybyd._api.control import poll_remote_control
+from pybyd._api.control import parse_remote_control_result_data, poll_remote_control
 from pybyd._api.control import verify_control_password as verify_control_password_api
 from pybyd._api.energy import energy_from_realtime_cache, fetch_energy_consumption
 from pybyd._api.gps import poll_gps_info
@@ -22,6 +23,7 @@ from pybyd._cache import VehicleDataCache
 from pybyd._constants import SESSION_EXPIRED_CODES
 from pybyd._crypto.bangcle import BangcleCodec
 from pybyd._crypto.hashing import md5_hex
+from pybyd._mqtt import BydMqttRuntime, MqttBootstrap, MqttEvent, fetch_mqtt_bootstrap
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
 from pybyd.exceptions import (
@@ -29,6 +31,7 @@ from pybyd.exceptions import (
     BydEndpointNotSupportedError,
     BydError,
     BydRateLimitError,
+    BydRemoteControlError,
 )
 from pybyd.models.charging import ChargingStatus
 from pybyd.models.control import RemoteCommand, RemoteControlResult
@@ -83,6 +86,7 @@ class BydClient:
         session: aiohttp.ClientSession | None = None,
         codec: BangcleCodec | None = None,
         debug_recorder: Callable[[dict[str, Any]], None] | None = None,
+        response_trace_recorder: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._config = config
         self._external_session = session is not None
@@ -94,6 +98,10 @@ class BydClient:
         self._unsupported: dict[str, set[str]] = {}
         self._vehicle_permission_codes: dict[str, set[str]] = {}
         self._debug_recorder = debug_recorder
+        self._response_trace_recorder = response_trace_recorder
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._mqtt_runtime: BydMqttRuntime | None = None
+        self._mqtt_command_waiters: dict[str, list[asyncio.Future[RemoteControlResult]]] = {}
 
     @staticmethod
     def _flatten_permission_codes(vehicle: Vehicle) -> set[str]:
@@ -132,17 +140,34 @@ class BydClient:
         return "2" in codes and control_children == {"21"}
 
     async def __aenter__(self) -> BydClient:
+        self._loop = asyncio.get_running_loop()
         if self._http_session is None:
             self._http_session = aiohttp.ClientSession()
-        self._transport = SecureTransport(self._config, self._codec, self._http_session)
+
+        trace_recorder = self._response_trace_recorder
+        if trace_recorder is None and self._config.api_trace_enabled:
+
+            def _log_trace(payload: dict[str, Any]) -> None:
+                _logger.debug("api_trace payload=%s", payload)
+
+            trace_recorder = _log_trace
+
+        self._transport = SecureTransport(
+            self._config,
+            self._codec,
+            self._http_session,
+            trace_recorder=trace_recorder,
+        )
         await self._codec.async_load_tables()
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
+        self._stop_mqtt_runtime()
         if not self._external_session and self._http_session is not None:
             await self._http_session.close()
             self._http_session = None
         self._transport = None
+        self._loop = None
 
     def _require_transport(self) -> SecureTransport:
         """Return the transport or raise if not initialized."""
@@ -185,8 +210,194 @@ class BydClient:
             encry_token=token.encry_token,
             ttl=ttl,
         )
+        await self._ensure_mqtt_runtime_started()
         _logger.debug("Login succeeded for user_id=%s", token.user_id)
         return token
+
+    async def get_mqtt_bootstrap(self) -> MqttBootstrap:
+        """Resolve MQTT broker credentials for the current session."""
+        session = await self.ensure_session()
+        transport = self._require_transport()
+        return await fetch_mqtt_bootstrap(self._config, session, transport)
+
+    async def _ensure_mqtt_runtime_started(self) -> None:
+        if not self._config.mqtt_enabled:
+            return
+        if self._loop is None:
+            self._loop = asyncio.get_running_loop()
+        session = self._session
+        if session is None:
+            return
+        try:
+            bootstrap = await self.get_mqtt_bootstrap()
+            runtime = BydMqttRuntime(
+                loop=self._loop,
+                decrypt_key_hex=session.content_key,
+                on_event=self._on_mqtt_event,
+                keepalive=self._config.mqtt_keepalive,
+                logger=_logger,
+            )
+            runtime.start(bootstrap)
+            previous = self._mqtt_runtime
+            self._mqtt_runtime = runtime
+            if previous is not None:
+                previous.stop()
+        except Exception:
+            _logger.warning("Failed to start MQTT runtime; continuing with polling", exc_info=True)
+
+    def _stop_mqtt_runtime(self) -> None:
+        runtime = self._mqtt_runtime
+        self._mqtt_runtime = None
+        if runtime is not None:
+            runtime.stop()
+
+    @staticmethod
+    def _project_mqtt_hvac_patch(realtime_data: dict[str, Any], vin: str) -> dict[str, Any]:
+        fields = {
+            "mainSettingTemp",
+            "mainSettingTempNew",
+            "copilotSettingTemp",
+            "copilotSettingTempNew",
+            "tempInCar",
+            "mainSeatHeatState",
+            "mainSeatVentilationState",
+            "copilotSeatHeatState",
+            "copilotSeatVentilationState",
+            "steeringWheelHeatState",
+            "lrSeatHeatState",
+            "lrSeatVentilationState",
+            "rrSeatHeatState",
+            "rrSeatVentilationState",
+            "lrThirdHeatState",
+            "lrThirdVentilationState",
+            "rrThirdHeatState",
+            "rrThirdVentilationState",
+        }
+        patch = {key: realtime_data[key] for key in fields if key in realtime_data}
+        if "airRunState" in realtime_data and "cycleChoice" not in patch:
+            patch["cycleChoice"] = realtime_data.get("airRunState")
+        if "time" in realtime_data:
+            patch.setdefault("time", realtime_data.get("time"))
+        patch.setdefault("vin", vin)
+        return patch
+
+    @staticmethod
+    def _project_mqtt_charging_patch(realtime_data: dict[str, Any], vin: str) -> dict[str, Any]:
+        patch: dict[str, Any] = {"vin": vin}
+        if "elecPercent" in realtime_data:
+            patch["soc"] = realtime_data.get("elecPercent")
+        for key in ("chargingState", "connectState", "waitStatus", "fullHour", "fullMinute"):
+            if key in realtime_data:
+                patch[key] = realtime_data.get(key)
+        if "time" in realtime_data:
+            patch["updateTime"] = realtime_data.get("time")
+        return patch
+
+    @staticmethod
+    def _project_mqtt_energy_patch(realtime_data: dict[str, Any], vin: str) -> dict[str, Any]:
+        patch: dict[str, Any] = {"vin": vin}
+        for key in (
+            "totalEnergy",
+            "nearestEnergyConsumption",
+            "nearestEnergyConsumptionUnit",
+            "recent50kmEnergy",
+            "totalConsumption",
+            "totalConsumptionEn",
+            "energyConsumption",
+        ):
+            if key in realtime_data:
+                patch[key] = realtime_data.get(key)
+        return patch
+
+    def _on_mqtt_event(self, event: MqttEvent) -> None:
+        if event.event == "vehicleInfo":
+            self._handle_mqtt_vehicle_info(event)
+            return
+        if event.event == "remoteControl":
+            self._handle_mqtt_remote_control(event)
+            return
+        _logger.debug("unknown payload via mqtt, should be included for parsing? event=%s", event.event)
+
+    def _handle_mqtt_vehicle_info(self, event: MqttEvent) -> None:
+        payload = event.payload
+        data_obj = payload.get("data")
+        if not isinstance(data_obj, dict):
+            _logger.debug("unknown payload via mqtt, should be included for parsing? event=vehicleInfo")
+            return
+        respond_data = data_obj.get("respondData")
+        if not isinstance(respond_data, dict):
+            _logger.debug("unknown payload via mqtt, should be included for parsing? event=vehicleInfo")
+            return
+
+        vin = event.vin
+        if not vin:
+            _logger.debug("unknown payload via mqtt, should be included for parsing? event=vehicleInfo")
+            return
+
+        self._cache.merge_realtime(vin, respond_data)
+        hvac_patch = self._project_mqtt_hvac_patch(respond_data, vin)
+        if hvac_patch:
+            self._cache.merge_hvac(vin, hvac_patch)
+        charging_patch = self._project_mqtt_charging_patch(respond_data, vin)
+        if charging_patch:
+            self._cache.merge_charging(vin, charging_patch)
+        energy_patch = self._project_mqtt_energy_patch(respond_data, vin)
+        if energy_patch:
+            self._cache.merge_energy(vin, energy_patch)
+
+    def _resolve_mqtt_waiter(self, vin: str, result: RemoteControlResult) -> None:
+        waiters = self._mqtt_command_waiters.get(vin)
+        if not waiters:
+            return
+        while waiters:
+            waiter = waiters.pop(0)
+            if waiter.done():
+                continue
+            waiter.set_result(result)
+            break
+        if not waiters:
+            self._mqtt_command_waiters.pop(vin, None)
+
+    def _handle_mqtt_remote_control(self, event: MqttEvent) -> None:
+        payload = event.payload
+        data_obj = payload.get("data")
+        if not isinstance(data_obj, dict):
+            _logger.debug("unknown payload via mqtt, should be included for parsing? event=remoteControl")
+            return
+        respond_data = data_obj.get("respondData")
+        if not isinstance(respond_data, dict):
+            _logger.debug("unknown payload via mqtt, should be included for parsing? event=remoteControl")
+            return
+
+        vin = event.vin
+        if not vin:
+            _logger.debug("unknown payload via mqtt, should be included for parsing? event=remoteControl")
+            return
+
+        result = parse_remote_control_result_data(respond_data)
+        self._resolve_mqtt_waiter(vin, result)
+
+    async def _wait_for_mqtt_remote_result(
+        self,
+        vin: str,
+        timeout_seconds: float,
+    ) -> RemoteControlResult | None:
+        runtime = self._mqtt_runtime
+        if runtime is None or not runtime.is_running or timeout_seconds <= 0:
+            return None
+        loop = self._loop or asyncio.get_running_loop()
+        waiter: asyncio.Future[RemoteControlResult] = loop.create_future()
+        self._mqtt_command_waiters.setdefault(vin, []).append(waiter)
+        try:
+            return await asyncio.wait_for(waiter, timeout_seconds)
+        except TimeoutError:
+            return None
+        finally:
+            waiters = self._mqtt_command_waiters.get(vin)
+            if waiters is not None:
+                self._mqtt_command_waiters[vin] = [candidate for candidate in waiters if candidate is not waiter]
+                if not self._mqtt_command_waiters[vin]:
+                    self._mqtt_command_waiters.pop(vin, None)
 
     async def ensure_session(self) -> Session:
         """Return a valid session, logging in automatically if needed.
@@ -607,9 +818,12 @@ class BydClient:
             realtime_patch: dict[str, Any] = {}
             if isinstance(main_temp, int):
                 hvac_patch["mainSettingTemp"] = main_temp
+                # BYD scale → °C: scale + 14
+                hvac_patch["mainSettingTempNew"] = float(main_temp + 14)
                 realtime_patch["mainSettingTemp"] = main_temp
             if isinstance(copilot_temp, int):
                 hvac_patch["copilotSettingTemp"] = copilot_temp
+                hvac_patch["copilotSettingTempNew"] = float(copilot_temp + 14)
             if isinstance(cycle_mode, int):
                 hvac_patch["cycleChoice"] = cycle_mode
                 realtime_patch["airRunState"] = cycle_mode
@@ -622,22 +836,24 @@ class BydClient:
             main_temp = params.get("mainSettingTemp")
             copilot_temp = params.get("copilotSettingTemp")
             cycle_mode = params.get("cycleMode")
-            hvac_patch = {
+            stop_hvac_patch: dict[str, Any] = {
                 "acSwitch": 0,
                 "status": 0,
                 "airConditioningMode": 0,
             }
-            realtime_patch: dict[str, Any] = {}
+            stop_realtime_patch: dict[str, Any] = {}
             if isinstance(main_temp, int):
-                hvac_patch["mainSettingTemp"] = main_temp
-                realtime_patch["mainSettingTemp"] = main_temp
+                stop_hvac_patch["mainSettingTemp"] = main_temp
+                stop_hvac_patch["mainSettingTempNew"] = float(main_temp + 14)
+                stop_realtime_patch["mainSettingTemp"] = main_temp
             if isinstance(copilot_temp, int):
-                hvac_patch["copilotSettingTemp"] = copilot_temp
+                stop_hvac_patch["copilotSettingTemp"] = copilot_temp
+                stop_hvac_patch["copilotSettingTempNew"] = float(copilot_temp + 14)
             if isinstance(cycle_mode, int):
-                hvac_patch["cycleChoice"] = cycle_mode
-                realtime_patch["airRunState"] = cycle_mode
-            self._optimistic_merge_hvac(vin, hvac_patch)
-            self._optimistic_merge_realtime(vin, realtime_patch)
+                stop_hvac_patch["cycleChoice"] = cycle_mode
+                stop_realtime_patch["airRunState"] = cycle_mode
+            self._optimistic_merge_hvac(vin, stop_hvac_patch)
+            self._optimistic_merge_realtime(vin, stop_realtime_patch)
             return
 
         if command == RemoteCommand.SEAT_CLIMATE:
@@ -653,17 +869,17 @@ class BydClient:
                 "rrSeatVentilationState": "rrSeatVentilationState",
                 "steeringWheelHeatState": "steeringWheelHeatState",
             }
-            hvac_patch: dict[str, Any] = {}
-            realtime_patch: dict[str, Any] = {}
+            seat_hvac_patch: dict[str, Any] = {}
+            seat_realtime_patch: dict[str, Any] = {}
             for source_key, target_key in seat_field_map.items():
                 value = params.get(source_key)
                 if isinstance(value, int):
-                    hvac_patch[target_key] = value
-                    realtime_patch[target_key] = value
-            if hvac_patch:
-                self._optimistic_merge_hvac(vin, hvac_patch)
-            if realtime_patch:
-                self._optimistic_merge_realtime(vin, realtime_patch)
+                    seat_hvac_patch[target_key] = value
+                    seat_realtime_patch[target_key] = value
+            if seat_hvac_patch:
+                self._optimistic_merge_hvac(vin, seat_hvac_patch)
+            if seat_realtime_patch:
+                self._optimistic_merge_realtime(vin, seat_realtime_patch)
             return
 
         if command == RemoteCommand.BATTERY_HEAT:
@@ -760,6 +976,11 @@ class BydClient:
         session = await self.ensure_session()
         transport = self._require_transport()
         resolved_pwd = self._resolve_command_pwd(command_pwd)
+        mqtt_result_waiter = (
+            (lambda _serial: self._wait_for_mqtt_remote_result(vin, self._config.mqtt_command_timeout))
+            if self._config.mqtt_enabled
+            else None
+        )
         try:
             result = await poll_remote_control(
                 self._config,
@@ -776,6 +997,7 @@ class BydClient:
                 command_retries=command_retries,
                 command_retry_delay=command_retry_delay,
                 debug_recorder=self._debug_recorder,
+                mqtt_result_waiter=mqtt_result_waiter,
             )
             return self._finalize_remote_control_result(
                 vin,
@@ -789,7 +1011,9 @@ class BydClient:
             # failure.  Apply optimistic cache updates so that the next
             # data read reflects the expected state.
             self._apply_optimistic_command_state(
-                vin, command, control_params=control_params,
+                vin,
+                command,
+                control_params=control_params,
             )
             raise
         except BydEndpointNotSupportedError:
@@ -817,6 +1041,7 @@ class BydClient:
                     command_retries=command_retries,
                     command_retry_delay=command_retry_delay,
                     debug_recorder=self._debug_recorder,
+                    mqtt_result_waiter=mqtt_result_waiter,
                 )
                 return self._finalize_remote_control_result(
                     vin,
@@ -826,7 +1051,9 @@ class BydClient:
                 )
             except BydRemoteControlError:
                 self._apply_optimistic_command_state(
-                    vin, command, control_params=control_params,
+                    vin,
+                    command,
+                    control_params=control_params,
                 )
                 raise
             except BydEndpointNotSupportedError:

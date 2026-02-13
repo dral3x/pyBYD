@@ -15,7 +15,7 @@ import json
 import logging
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 from pybyd._api._envelope import build_token_outer_envelope
@@ -248,6 +248,11 @@ def _parse_control_result(data: dict[str, Any]) -> RemoteControlResult:
     )
 
 
+def parse_remote_control_result_data(data: dict[str, Any]) -> RemoteControlResult:
+    """Parse raw remote-control result payload into a typed model."""
+    return _parse_control_result(data)
+
+
 async def _fetch_control_endpoint(
     endpoint: str,
     config: BydConfig,
@@ -371,6 +376,7 @@ async def poll_remote_control(
     command_retries: int = 3,
     command_retry_delay: float = 3.0,
     debug_recorder: Callable[[dict[str, Any]], None] | None = None,
+    mqtt_result_waiter: Callable[[str | None], Awaitable[RemoteControlResult | None]] | None = None,
 ) -> RemoteControlResult:
     """Send a remote control command and poll until completion.
 
@@ -436,6 +442,7 @@ async def poll_remote_control(
                 rate_limit_retries=rate_limit_retries,
                 rate_limit_delay=rate_limit_delay,
                 debug_recorder=debug_recorder,
+                mqtt_result_waiter=mqtt_result_waiter,
             )
         except BydRemoteControlError as exc:
             last_exc = exc
@@ -468,6 +475,7 @@ async def _poll_remote_control_once(
     rate_limit_retries: int = 3,
     rate_limit_delay: float = 5.0,
     debug_recorder: Callable[[dict[str, Any]], None] | None = None,
+    mqtt_result_waiter: Callable[[str | None], Awaitable[RemoteControlResult | None]] | None = None,
 ) -> RemoteControlResult:
     """Single attempt: trigger + poll.  Raises on failure."""
     # Phase 1: Trigger request (with control params) — retry on 6024
@@ -526,6 +534,14 @@ async def _poll_remote_control_once(
 
     if not serial:
         return _parse_control_result(result if isinstance(result, dict) else {})
+
+    if mqtt_result_waiter is not None:
+        try:
+            mqtt_result = await mqtt_result_waiter(serial)
+            if mqtt_result is not None:
+                return mqtt_result
+        except Exception:
+            _logger.debug("MQTT remote control wait failed; falling back to polling", exc_info=True)
 
     # Phase 2: Poll for results
     latest = result

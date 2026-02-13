@@ -7,6 +7,17 @@ import os
 from typing import Any
 
 
+def _env_bool(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
 @dataclasses.dataclass(frozen=True)
 class DeviceProfile:
     """Device identity fields sent with every request.
@@ -67,6 +78,14 @@ class BydConfig:
         the client will automatically re-authenticate on the next API
         call.  Defaults to 12 hours.  Set to ``0`` to disable
         automatic expiry (the session will only refresh on auth errors).
+    mqtt_enabled : bool
+        Enable MQTT background listener for realtime state enrichment.
+    mqtt_keepalive : int
+        MQTT keepalive in seconds.
+    mqtt_command_timeout : float
+        Seconds to wait for MQTT command result before HTTP polling fallback.
+    api_trace_enabled : bool
+        Enable transport-level request/response tracing callback.
     device : DeviceProfile
         Device identity fields.
     """
@@ -84,6 +103,10 @@ class BydConfig:
     is_auto: str = "1"
     control_pin: str | None = None
     session_ttl: float = 12 * 3600
+    mqtt_enabled: bool = True
+    mqtt_keepalive: int = 120
+    mqtt_command_timeout: float = 8.0
+    api_trace_enabled: bool = False
     device: DeviceProfile = dataclasses.field(default_factory=DeviceProfile)
 
     @classmethod
@@ -159,6 +182,23 @@ class BydConfig:
         ttl_env = env.get("BYD_SESSION_TTL")
         if ttl_env is not None and "session_ttl" not in overrides:
             config_kwargs["session_ttl"] = float(ttl_env)
+
+        if "mqtt_enabled" not in overrides:
+            config_kwargs["mqtt_enabled"] = _env_bool(env.get("BYD_MQTT_ENABLED"), True)
+
+        keepalive_env = env.get("BYD_MQTT_KEEPALIVE")
+        if keepalive_env is not None and "mqtt_keepalive" not in overrides:
+            config_kwargs["mqtt_keepalive"] = int(keepalive_env)
+
+        timeout_env = env.get("BYD_MQTT_COMMAND_TIMEOUT")
+        if timeout_env is not None and "mqtt_command_timeout" not in overrides:
+            config_kwargs["mqtt_command_timeout"] = float(timeout_env)
+
+        if "api_trace_enabled" not in overrides:
+            config_kwargs["api_trace_enabled"] = _env_bool(
+                env.get("BYD_API_TRACE_ENABLED"),
+                False,
+            )
 
         config_kwargs.update(overrides)
 

@@ -23,6 +23,7 @@ Thanks!
 - Python 3.11+
 - aiohttp
 - cryptography
+- paho-mqtt
 
 ## Installation
 
@@ -116,10 +117,29 @@ parameters are configurable:
 result = await client.lock(vin, poll_attempts=15, poll_interval=2.0)
 ```
 
+When MQTT is enabled (default), pyBYD uses MQTT-first completion:
+
+1. trigger command via HTTP,
+2. wait briefly for MQTT `remoteControl` response,
+3. fall back to HTTP polling if no MQTT result arrives.
+
+This preserves reliability while reducing command-result latency when
+MQTT is available.
+
 On successful command completion, pyBYD applies an optimistic update to
 cached command-related fields (for example lock/window/climate/seat/battery-heat
 state). This allows integrations to reflect the desired target state
 immediately while waiting for the next backend telemetry refresh.
+
+MQTT `vehicleInfo` payloads are also merged into the internal cache and
+propagated across realtime/HVAC/charging/energy snapshots, keeping read
+methods as up to date as possible between explicit API polls.
+
+MQTT-related configuration:
+
+- `mqtt_enabled` / `BYD_MQTT_ENABLED` (default: enabled)
+- `mqtt_keepalive` / `BYD_MQTT_KEEPALIVE` (default: 120)
+- `mqtt_command_timeout` / `BYD_MQTT_COMMAND_TIMEOUT` (default: 8.0)
 
 If `control_pin` is configured, the client verifies it once via
 `/vehicle/vehicleswitch/verifyControlPassword` during initialization
@@ -181,6 +201,34 @@ python scripts/dump_all.py --skip-gps --skip-energy
 
 # Debug logging
 python scripts/dump_all.py -v
+```
+
+## MQTT probe (passive watch)
+
+`scripts/mqtt_probe.py` connects to the app MQTT broker and subscribes to:
+
+- `oversea/res/<userId>`
+
+It reuses pyBYD login/session logic, resolves broker via
+`/app/emqAuth/getEmqBrokerIp` using the same core MQTT helpers as the
+library client, and decrypts payloads using
+`MD5(encryToken)` + AES-128-CBC (zero IV).
+
+```bash
+export BYD_USERNAME="you@example.com"
+export BYD_PASSWORD="your-password"
+
+# Watch indefinitely (Ctrl+C to stop)
+python scripts/mqtt_probe.py
+
+# Watch for 10 minutes and pretty-print decrypted JSON
+python scripts/mqtt_probe.py --duration 600 --json
+
+# Print idle notices every 30s if no messages arrive
+python scripts/mqtt_probe.py --idle-report-seconds 30
+
+# Print raw payloads (ASCII hex) too
+python scripts/mqtt_probe.py --raw
 ```
 
 ## Credits

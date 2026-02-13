@@ -1,8 +1,11 @@
 """pybyd - Async Python client for BYD vehicle telemetry API."""
 
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 
-__version__ = version("pybyd")
+try:
+    __version__ = version("pybyd")
+except PackageNotFoundError:
+    __version__ = "0+local"
 from pybyd.client import BydClient
 from pybyd.config import BydConfig, DeviceProfile
 from pybyd.exceptions import (
