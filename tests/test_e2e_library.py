@@ -253,6 +253,7 @@ async def test_e2e_client_happy_path_exercises_full_library(config: BydConfig, b
 
     assert backend.calls.get("/app/account/login", 0) == 2
     assert backend.calls.get("/app/emqAuth/getEmqBrokerIp", 0) >= 2
+    assert backend.calls.get("/vehicle/vehicleswitch/verifyControlPassword", 0) == 1
     assert backend.calls.get("/control/remoteControlResult", 0) == 0
 
 

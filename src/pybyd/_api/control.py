@@ -130,7 +130,13 @@ async def verify_control_password(
     """
     now_ms = int(time.time() * 1000)
     inner = _build_verify_control_password_inner(config, vin, command_pwd, now_ms)
-    outer, content_key = build_token_outer_envelope(config, session, inner, now_ms)
+    outer, content_key = build_token_outer_envelope(
+        config,
+        session,
+        inner,
+        now_ms,
+        user_type="1",
+    )
 
     response = await transport.post_secure(VERIFY_CONTROL_PASSWORD_ENDPOINT, outer)
     resp_code = str(response.get("code", ""))
@@ -164,14 +170,7 @@ async def verify_control_password(
         return {}
     decrypted_inner = aes_decrypt_utf8(encrypted_inner, content_key)
     if not decrypted_inner or not decrypted_inner.strip():
-        raise BydControlPasswordError(
-            (
-                f"{VERIFY_CONTROL_PASSWORD_ENDPOINT} failed: "
-                "empty decrypted payload (invalid control PIN or cloud control locked)"
-            ),
-            code="5005",
-            endpoint=VERIFY_CONTROL_PASSWORD_ENDPOINT,
-        )
+        return {}
 
     try:
         parsed = json.loads(decrypted_inner)

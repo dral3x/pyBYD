@@ -21,6 +21,8 @@ def build_token_outer_envelope(
     session: Session,
     inner: dict[str, str],
     now_ms: int,
+    *,
+    user_type: str | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Build a signed outer envelope for post-login requests.
 
@@ -74,6 +76,8 @@ def build_token_outer_envelope(
         "mod": config.device.mod,
         "serviceTime": str(int(time.time() * 1000)),
     }
+    if user_type is not None:
+        outer["userType"] = user_type
     outer["checkcode"] = compute_checkcode(outer)
 
     return outer, session.content_key

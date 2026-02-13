@@ -141,10 +141,9 @@ MQTT-related configuration:
 - `mqtt_keepalive` / `BYD_MQTT_KEEPALIVE` (default: 120)
 - `mqtt_command_timeout` / `BYD_MQTT_COMMAND_TIMEOUT` (default: 8.0)
 
-If `control_pin` is configured, the client verifies it once via
-`/vehicle/vehicleswitch/verifyControlPassword` during initialization
-(`get_vehicles`). If verification fails, remote commands are disabled
-for that client instance to avoid hammering the API.
+`verify_control_password(...)` is available as an explicit helper call,
+but remote commands are sent directly with `commandPwd` and rely on API
+responses for success/failure.
 
 ## Error handling
 
@@ -183,7 +182,6 @@ unparsed fields or contributing new model coverage:
 ```bash
 export BYD_USERNAME="you@example.com"
 export BYD_PASSWORD="your-password"
-
 # Human-readable output
 python scripts/dump_all.py
 
