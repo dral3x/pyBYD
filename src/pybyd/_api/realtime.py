@@ -12,6 +12,7 @@ import json
 import logging
 import secrets
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from pybyd._api._envelope import build_token_outer_envelope
@@ -302,6 +303,8 @@ async def poll_vehicle_realtime(
     poll_interval: float = 1.5,
     cache: VehicleDataCache | None = None,
     stale_after: float | None = None,
+    pre_poll_waiter: Callable[[str, float], Awaitable[bool]] | None = None,
+    pre_poll_wait_seconds: float = 0.0,
 ) -> VehicleRealtimeData:
     """Poll vehicle realtime data until ready or attempts exhausted.
 
@@ -371,6 +374,20 @@ async def poll_vehicle_realtime(
     if not serial:
         _logger.debug("Realtime request returned without serial vin=%s; returning latest snapshot", vin)
         return _parse_vehicle_info(merged_latest)
+
+    if pre_poll_waiter is not None and pre_poll_wait_seconds > 0:
+        try:
+            _logger.debug("Realtime waiting for MQTT update vin=%s timeout_s=%.2f", vin, pre_poll_wait_seconds)
+            mqtt_updated = await pre_poll_waiter(vin, pre_poll_wait_seconds)
+            if mqtt_updated:
+                if cache is not None:
+                    cached = cache.get_realtime(vin)
+                    if cached:
+                        merged_latest = cached
+                _logger.debug("Realtime polling skipped due to MQTT update vin=%s", vin)
+                return _parse_vehicle_info(merged_latest if isinstance(merged_latest, dict) else {})
+        except Exception:
+            _logger.debug("Realtime MQTT pre-poll wait failed; continuing with HTTP polling", exc_info=True)
 
     # Phase 2: Poll for results
     _logger.debug(

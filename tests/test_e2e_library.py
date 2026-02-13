@@ -23,6 +23,7 @@ class FakeBydBackend:
     expire_once_endpoints: set[str] = field(default_factory=set)
     _expired_already: set[str] = field(default_factory=set)
     emit_mqtt_remote_result: bool = True
+    emit_mqtt_realtime_result: bool = False
     mqtt_event_handler: Callable[[MqttEvent], None] | None = None
 
     def _record_call(self, endpoint: str) -> None:
@@ -39,6 +40,29 @@ class FakeBydBackend:
             vin=self.vin,
             topic="oversea/res/user-1",
             payload={"data": {"respondData": {"res": 2, "message": "ok", "requestSerial": "CMD-1"}}},
+        )
+        asyncio.get_running_loop().call_later(0.01, self.mqtt_event_handler, event)
+
+    def _maybe_emit_realtime_event(self) -> None:
+        if not self.emit_mqtt_realtime_result or self.mqtt_event_handler is None:
+            return
+        event = MqttEvent(
+            event="vehicleInfo",
+            vin=self.vin,
+            topic="oversea/res/user-1",
+            payload={
+                "data": {
+                    "respondData": {
+                        "requestSerial": "RT-1",
+                        "onlineState": 1,
+                        "time": 1771000003,
+                        "elecPercent": 91,
+                        "speed": 0,
+                        "leftFrontDoorLock": 2,
+                        "rightFrontDoorLock": 2,
+                    }
+                }
+            },
         )
         asyncio.get_running_loop().call_later(0.01, self.mqtt_event_handler, event)
 
@@ -77,6 +101,7 @@ class FakeBydBackend:
             )
 
         if endpoint == "/vehicleInfo/vehicle/vehicleRealTimeRequest":
+            self._maybe_emit_realtime_event()
             return self._code_zero({"requestSerial": "RT-1", "onlineState": 2})
 
         if endpoint == "/vehicleInfo/vehicle/vehicleRealTimeResult":
@@ -301,3 +326,19 @@ async def test_e2e_remote_control_falls_back_to_poll_when_mqtt_times_out(
         assert result.success is True
 
     assert backend.calls.get("/control/remoteControlResult", 0) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e
+async def test_e2e_realtime_uses_mqtt_before_http_poll(config: BydConfig, backend: FakeBydBackend) -> None:
+    backend.emit_mqtt_realtime_result = True
+
+    async with BydClient(config) as client:
+        backend.mqtt_event_handler = client._on_mqtt_event
+        vehicles = await client.get_vehicles()
+        vin = vehicles[0].vin
+
+        realtime = await client.get_vehicle_realtime(vin, poll_attempts=2, poll_interval=0)
+        assert realtime.elec_percent == 91
+
+    assert backend.calls.get("/vehicleInfo/vehicle/vehicleRealTimeResult", 0) == 0

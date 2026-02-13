@@ -18,6 +18,13 @@ Any help around this is grately appreciated, use the [test client](https://githu
 
 Thanks!
 
+## Feature highlights
+
+- Polling support for live vehicle metrics (realtime, GPS, energy, charging, HVAC).
+- Remote command support for lock/unlock, horn/lights, and climate actions.
+- Built-in per-vehicle cache layer that merges partial responses, reducing load on BYD's servers
+- MQTT-assisted updates that feeds in to the cache layer
+
 ## Requirements
 
 - Python 3.11+

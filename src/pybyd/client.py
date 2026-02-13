@@ -44,6 +44,7 @@ from pybyd.models.vehicle import Vehicle
 from pybyd.session import Session
 
 _logger = logging.getLogger(__name__)
+_REALTIME_MQTT_PRE_POLL_WAIT_SECONDS = 5.0
 
 
 def _validate_climate_temperature(value: int, name: str) -> int:
@@ -102,6 +103,8 @@ class BydClient:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._mqtt_runtime: BydMqttRuntime | None = None
         self._mqtt_command_waiters: dict[str, list[asyncio.Future[RemoteControlResult]]] = {}
+        self._mqtt_vehicle_info_waiters: dict[str, list[asyncio.Event]] = {}
+        self._mqtt_vehicle_info_versions: dict[str, int] = {}
 
     @staticmethod
     def _flatten_permission_codes(vehicle: Vehicle) -> set[str]:
@@ -344,6 +347,7 @@ class BydClient:
 
         _logger.debug("Applying MQTT vehicleInfo cache enrichment vin=%s keys=%s", vin, len(respond_data))
         self._cache.merge_realtime(vin, respond_data)
+        self._notify_mqtt_vehicle_info(vin)
         hvac_patch = self._project_mqtt_hvac_patch(respond_data, vin)
         if hvac_patch:
             _logger.debug("MQTT HVAC patch applied vin=%s keys=%s", vin, len(hvac_patch))
@@ -356,6 +360,41 @@ class BydClient:
         if energy_patch:
             _logger.debug("MQTT energy patch applied vin=%s keys=%s", vin, len(energy_patch))
             self._cache.merge_energy(vin, energy_patch)
+
+    def _notify_mqtt_vehicle_info(self, vin: str) -> None:
+        self._mqtt_vehicle_info_versions[vin] = self._mqtt_vehicle_info_versions.get(vin, 0) + 1
+        waiters = self._mqtt_vehicle_info_waiters.pop(vin, [])
+        for waiter in waiters:
+            if not waiter.is_set():
+                waiter.set()
+
+    async def _wait_for_mqtt_vehicle_info(self, vin: str, timeout_seconds: float) -> bool:
+        runtime = self._mqtt_runtime
+        if runtime is None or not runtime.is_running or timeout_seconds <= 0:
+            return False
+
+        baseline_version = self._mqtt_vehicle_info_versions.get(vin, 0)
+        waiter = asyncio.Event()
+        waiters = self._mqtt_vehicle_info_waiters.setdefault(vin, [])
+        waiters.append(waiter)
+
+        if self._mqtt_vehicle_info_versions.get(vin, 0) != baseline_version:
+            waiter.set()
+
+        _logger.debug("Waiting for MQTT vehicleInfo update vin=%s timeout=%.2fs", vin, timeout_seconds)
+        try:
+            await asyncio.wait_for(waiter.wait(), timeout_seconds)
+            _logger.debug("MQTT vehicleInfo wait completed vin=%s", vin)
+            return True
+        except TimeoutError:
+            _logger.debug("MQTT vehicleInfo wait timed out vin=%s after %.2fs", vin, timeout_seconds)
+            return False
+        finally:
+            pending = self._mqtt_vehicle_info_waiters.get(vin)
+            if pending is not None:
+                self._mqtt_vehicle_info_waiters[vin] = [candidate for candidate in pending if candidate is not waiter]
+                if not self._mqtt_vehicle_info_waiters[vin]:
+                    self._mqtt_vehicle_info_waiters.pop(vin, None)
 
     def _resolve_mqtt_waiter(self, vin: str, result: RemoteControlResult) -> None:
         waiters = self._mqtt_command_waiters.get(vin)
@@ -541,6 +580,8 @@ class BydClient:
                 poll_interval=poll_interval,
                 cache=self._cache,
                 stale_after=stale_after,
+                pre_poll_waiter=self._wait_for_mqtt_vehicle_info,
+                pre_poll_wait_seconds=_REALTIME_MQTT_PRE_POLL_WAIT_SECONDS,
             )
         except BydApiError as exc:
             if exc.code not in SESSION_EXPIRED_CODES:
@@ -557,6 +598,8 @@ class BydClient:
                 poll_interval=poll_interval,
                 cache=self._cache,
                 stale_after=stale_after,
+                pre_poll_waiter=self._wait_for_mqtt_vehicle_info,
+                pre_poll_wait_seconds=_REALTIME_MQTT_PRE_POLL_WAIT_SECONDS,
             )
 
     async def get_gps_info(
