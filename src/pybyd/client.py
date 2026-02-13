@@ -223,25 +223,25 @@ class BydClient:
     async def _ensure_mqtt_runtime_started(self) -> None:
         if not self._config.mqtt_enabled:
             return
-        if self._loop is None:
-            self._loop = asyncio.get_running_loop()
+        loop = self._loop or asyncio.get_running_loop()
+        self._loop = loop
         session = self._session
         if session is None:
             return
         try:
             bootstrap = await self.get_mqtt_bootstrap()
             runtime = BydMqttRuntime(
-                loop=self._loop,
+                loop=loop,
                 decrypt_key_hex=session.content_key,
                 on_event=self._on_mqtt_event,
                 keepalive=self._config.mqtt_keepalive,
                 logger=_logger,
             )
-            runtime.start(bootstrap)
             previous = self._mqtt_runtime
+            await loop.run_in_executor(None, runtime.start, bootstrap)
             self._mqtt_runtime = runtime
             if previous is not None:
-                previous.stop()
+                await loop.run_in_executor(None, previous.stop)
         except Exception:
             _logger.warning("Failed to start MQTT runtime; continuing with polling", exc_info=True)
 
