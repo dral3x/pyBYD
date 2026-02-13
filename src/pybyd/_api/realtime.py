@@ -338,6 +338,12 @@ async def poll_vehicle_realtime(
             if age is not None and age <= threshold:
                 cached = cache.get_realtime(vin)
                 if cached:
+                    _logger.debug(
+                        "Realtime polling skipped due to fresh cache vin=%s age_s=%.2f threshold_s=%.2f",
+                        vin,
+                        age,
+                        threshold,
+                    )
                     return _parse_vehicle_info(cached)
     # Phase 1: Trigger request
     vehicle_info, serial = await _fetch_realtime_endpoint(
@@ -359,13 +365,22 @@ async def poll_vehicle_realtime(
     )
 
     if isinstance(vehicle_info, dict) and _is_realtime_data_ready(vehicle_info):
+        _logger.debug("Realtime data ready immediately after request vin=%s", vin)
         return _parse_vehicle_info(merged_latest)
 
     if not serial:
+        _logger.debug("Realtime request returned without serial vin=%s; returning latest snapshot", vin)
         return _parse_vehicle_info(merged_latest)
 
     # Phase 2: Poll for results
+    _logger.debug(
+        "Realtime polling started vin=%s attempts=%d interval_s=%.2f",
+        vin,
+        poll_attempts,
+        poll_interval,
+    )
     latest = vehicle_info
+    ready = False
     for attempt in range(1, poll_attempts + 1):
         if poll_interval > 0:
             await asyncio.sleep(poll_interval)
@@ -390,10 +405,15 @@ async def poll_vehicle_realtime(
                 serial,
             )
             if isinstance(latest, dict) and _is_realtime_data_ready(latest):
+                ready = True
+                _logger.debug("Realtime polling finished with ready data vin=%s attempt=%d", vin, attempt)
                 break
         except BydSessionExpiredError:
             raise
         except BydApiError:
             _logger.debug("Realtime poll attempt=%d failed", attempt, exc_info=True)
+
+    if not ready:
+        _logger.debug("Realtime polling exhausted without confirmed ready data vin=%s", vin)
 
     return _parse_vehicle_info(merged_latest if isinstance(merged_latest, dict) else {})

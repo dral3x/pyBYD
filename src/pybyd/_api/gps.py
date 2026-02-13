@@ -191,6 +191,12 @@ async def poll_gps_info(
             if age is not None and age <= threshold:
                 cached = cache.get_gps(vin)
                 if cached:
+                    _logger.debug(
+                        "GPS polling skipped due to fresh cache vin=%s age_s=%.2f threshold_s=%.2f",
+                        vin,
+                        age,
+                        threshold,
+                    )
                     return _parse_gps_info(cached)
     # Phase 1: Trigger request
     try:
@@ -218,13 +224,22 @@ async def poll_gps_info(
     )
 
     if isinstance(gps_info, dict) and _is_gps_info_ready(gps_info):
+        _logger.debug("GPS data ready immediately after request vin=%s", vin)
         return _parse_gps_info(merged_latest)
 
     if not serial:
+        _logger.debug("GPS request returned without serial vin=%s; returning latest snapshot", vin)
         return _parse_gps_info(merged_latest)
 
     # Phase 2: Poll for results
+    _logger.debug(
+        "GPS polling started vin=%s attempts=%d interval_s=%.2f",
+        vin,
+        poll_attempts,
+        poll_interval,
+    )
     latest = gps_info
+    ready = False
     for attempt in range(1, poll_attempts + 1):
         if poll_interval > 0:
             await asyncio.sleep(poll_interval)
@@ -249,10 +264,15 @@ async def poll_gps_info(
                 serial,
             )
             if isinstance(latest, dict) and _is_gps_info_ready(latest):
+                ready = True
+                _logger.debug("GPS polling finished with ready data vin=%s attempt=%d", vin, attempt)
                 break
         except BydSessionExpiredError:
             raise
         except BydApiError:
             _logger.debug("GPS poll attempt=%d failed", attempt, exc_info=True)
+
+    if not ready:
+        _logger.debug("GPS polling exhausted without confirmed ready data vin=%s", vin)
 
     return _parse_gps_info(merged_latest if isinstance(merged_latest, dict) else {})

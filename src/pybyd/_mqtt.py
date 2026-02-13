@@ -173,6 +173,13 @@ class BydMqttRuntime:
     def start(self, bootstrap: MqttBootstrap) -> None:
         """Connect and subscribe with provided broker details."""
         self.stop()
+        self._logger.debug(
+            "MQTT runtime start requested host=%s port=%s topic=%s client_id=%s",
+            bootstrap.broker_host,
+            bootstrap.broker_port,
+            bootstrap.topic,
+            bootstrap.client_id,
+        )
 
         client = mqtt.Client(
             callback_api_version=cast(Any, mqtt).CallbackAPIVersion.VERSION2,
@@ -195,15 +202,23 @@ class BydMqttRuntime:
             if reason_code.value != 0:
                 self._logger.warning("MQTT connect failed: %s", reason_code)
                 return
+            self._logger.debug("MQTT connected successfully reason=%s", reason_code)
             if self._topic:
+                self._logger.debug("MQTT subscribing topic=%s", self._topic)
                 c.subscribe(self._topic, qos=0)
 
         def on_message(_c: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
             try:
+                self._logger.debug(
+                    "MQTT payload received topic=%s bytes=%s",
+                    msg.topic,
+                    len(msg.payload),
+                )
                 payload = decode_mqtt_payload(msg.payload, self._decrypt_key_hex)
                 event_name = str(payload.get("event") or "")
                 vin_value = payload.get("vin")
                 vin = vin_value if isinstance(vin_value, str) and vin_value else None
+                self._logger.debug("MQTT payload decrypted event=%s vin=%s", event_name, vin)
                 event = MqttEvent(
                     event=event_name,
                     vin=vin,
@@ -233,6 +248,7 @@ class BydMqttRuntime:
 
         self._client = client
         self._running = True
+        self._logger.debug("MQTT network loop started")
 
     def stop(self) -> None:
         """Stop and disconnect current MQTT client if running."""
@@ -246,6 +262,8 @@ class BydMqttRuntime:
             return
         try:
             if was_running:
+                self._logger.debug("MQTT disconnect requested")
                 client.disconnect()
         finally:
             client.loop_stop()
+            self._logger.debug("MQTT network loop stopped")

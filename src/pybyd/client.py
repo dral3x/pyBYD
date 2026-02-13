@@ -222,6 +222,7 @@ class BydClient:
 
     async def _ensure_mqtt_runtime_started(self) -> None:
         if not self._config.mqtt_enabled:
+            _logger.debug("MQTT disabled by configuration")
             return
         loop = self._loop or asyncio.get_running_loop()
         self._loop = loop
@@ -230,6 +231,11 @@ class BydClient:
             return
         try:
             bootstrap = await self.get_mqtt_bootstrap()
+            _logger.debug(
+                "Starting MQTT runtime user_id=%s topic=%s",
+                bootstrap.user_id,
+                bootstrap.topic,
+            )
             runtime = BydMqttRuntime(
                 loop=loop,
                 decrypt_key_hex=session.content_key,
@@ -249,6 +255,7 @@ class BydClient:
         runtime = self._mqtt_runtime
         self._mqtt_runtime = None
         if runtime is not None:
+            _logger.debug("Stopping MQTT runtime")
             runtime.stop()
 
     @staticmethod
@@ -310,6 +317,7 @@ class BydClient:
         return patch
 
     def _on_mqtt_event(self, event: MqttEvent) -> None:
+        _logger.debug("MQTT event dispatched event=%s vin=%s topic=%s", event.event, event.vin, event.topic)
         if event.event == "vehicleInfo":
             self._handle_mqtt_vehicle_info(event)
             return
@@ -334,25 +342,31 @@ class BydClient:
             _logger.debug("unknown payload via mqtt, should be included for parsing? event=vehicleInfo")
             return
 
+        _logger.debug("Applying MQTT vehicleInfo cache enrichment vin=%s keys=%s", vin, len(respond_data))
         self._cache.merge_realtime(vin, respond_data)
         hvac_patch = self._project_mqtt_hvac_patch(respond_data, vin)
         if hvac_patch:
+            _logger.debug("MQTT HVAC patch applied vin=%s keys=%s", vin, len(hvac_patch))
             self._cache.merge_hvac(vin, hvac_patch)
         charging_patch = self._project_mqtt_charging_patch(respond_data, vin)
         if charging_patch:
+            _logger.debug("MQTT charging patch applied vin=%s keys=%s", vin, len(charging_patch))
             self._cache.merge_charging(vin, charging_patch)
         energy_patch = self._project_mqtt_energy_patch(respond_data, vin)
         if energy_patch:
+            _logger.debug("MQTT energy patch applied vin=%s keys=%s", vin, len(energy_patch))
             self._cache.merge_energy(vin, energy_patch)
 
     def _resolve_mqtt_waiter(self, vin: str, result: RemoteControlResult) -> None:
         waiters = self._mqtt_command_waiters.get(vin)
         if not waiters:
+            _logger.debug("MQTT remoteControl result received without waiter vin=%s", vin)
             return
         while waiters:
             waiter = waiters.pop(0)
             if waiter.done():
                 continue
+            _logger.debug("Resolving MQTT remoteControl waiter vin=%s success=%s", vin, result.success)
             waiter.set_result(result)
             break
         if not waiters:
@@ -375,6 +389,7 @@ class BydClient:
             return
 
         result = parse_remote_control_result_data(respond_data)
+        _logger.debug("MQTT remoteControl parsed vin=%s success=%s", vin, result.success)
         self._resolve_mqtt_waiter(vin, result)
 
     async def _wait_for_mqtt_remote_result(
@@ -388,9 +403,13 @@ class BydClient:
         loop = self._loop or asyncio.get_running_loop()
         waiter: asyncio.Future[RemoteControlResult] = loop.create_future()
         self._mqtt_command_waiters.setdefault(vin, []).append(waiter)
+        _logger.debug("Waiting for MQTT remoteControl result vin=%s timeout=%.2fs", vin, timeout_seconds)
         try:
-            return await asyncio.wait_for(waiter, timeout_seconds)
+            result = await asyncio.wait_for(waiter, timeout_seconds)
+            _logger.debug("MQTT wait completed vin=%s success=%s", vin, result.success)
+            return result
         except TimeoutError:
+            _logger.debug("MQTT wait timed out vin=%s after %.2fs", vin, timeout_seconds)
             return None
         finally:
             waiters = self._mqtt_command_waiters.get(vin)
@@ -967,6 +986,7 @@ class BydClient:
             If not logged in.
         """
         if self._is_control_unsupported(vin, command):
+            _logger.debug("Remote control blocked (marked unsupported) vin=%s command=%s", vin, command.name)
             raise BydEndpointNotSupportedError(
                 f"Remote control command {command.name} is marked unsupported for {vin}",
                 code="1001",
@@ -980,6 +1000,14 @@ class BydClient:
             (lambda _serial: self._wait_for_mqtt_remote_result(vin, self._config.mqtt_command_timeout))
             if self._config.mqtt_enabled
             else None
+        )
+        _logger.debug(
+            "Remote control start vin=%s command=%s mqtt_enabled=%s poll_attempts=%d poll_interval=%.2f",
+            vin,
+            command.name,
+            self._config.mqtt_enabled,
+            poll_attempts,
+            poll_interval,
         )
         try:
             result = await poll_remote_control(
@@ -999,6 +1027,13 @@ class BydClient:
                 debug_recorder=self._debug_recorder,
                 mqtt_result_waiter=mqtt_result_waiter,
             )
+            _logger.debug(
+                "Remote control completed vin=%s command=%s success=%s state=%s",
+                vin,
+                command.name,
+                result.success,
+                result.control_state,
+            )
             return self._finalize_remote_control_result(
                 vin,
                 command,
@@ -1006,6 +1041,7 @@ class BydClient:
                 control_params=control_params,
             )
         except BydRemoteControlError:
+            _logger.debug("Remote control failed vin=%s command=%s; applying optimistic fallback", vin, command.name)
             # controlState=2 — the command was sent to the vehicle and
             # the car likely acted on it, but cloud polling reported
             # failure.  Apply optimistic cache updates so that the next
@@ -1017,6 +1053,7 @@ class BydClient:
             )
             raise
         except BydEndpointNotSupportedError:
+            _logger.debug("Remote control endpoint marked unsupported vin=%s command=%s", vin, command.name)
             self._mark_control_unsupported(vin, command)
             raise
         except BydApiError as exc:
@@ -1026,6 +1063,7 @@ class BydClient:
             self.invalidate_session()
             session = await self.ensure_session()
             try:
+                _logger.debug("Remote control retry after re-auth vin=%s command=%s", vin, command.name)
                 result = await poll_remote_control(
                     self._config,
                     session,
@@ -1043,6 +1081,13 @@ class BydClient:
                     debug_recorder=self._debug_recorder,
                     mqtt_result_waiter=mqtt_result_waiter,
                 )
+                _logger.debug(
+                    "Remote control completed after re-auth vin=%s command=%s success=%s state=%s",
+                    vin,
+                    command.name,
+                    result.success,
+                    result.control_state,
+                )
                 return self._finalize_remote_control_result(
                     vin,
                     command,
@@ -1050,6 +1095,11 @@ class BydClient:
                     control_params=control_params,
                 )
             except BydRemoteControlError:
+                _logger.debug(
+                    "Remote control failed after re-auth vin=%s command=%s; applying optimistic fallback",
+                    vin,
+                    command.name,
+                )
                 self._apply_optimistic_command_state(
                     vin,
                     command,
@@ -1057,6 +1107,11 @@ class BydClient:
                 )
                 raise
             except BydEndpointNotSupportedError:
+                _logger.debug(
+                    "Remote control endpoint marked unsupported after re-auth vin=%s command=%s",
+                    vin,
+                    command.name,
+                )
                 self._mark_control_unsupported(vin, command)
                 raise
 

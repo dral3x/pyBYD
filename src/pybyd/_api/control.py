@@ -533,13 +533,22 @@ async def _poll_remote_control_once(
         return parsed
 
     if not serial:
+        _logger.debug("Remote control %s returned without requestSerial; using immediate result", command.name)
         return _parse_control_result(result if isinstance(result, dict) else {})
 
     if mqtt_result_waiter is not None:
         try:
+            _logger.debug("Remote control %s waiting for MQTT result serial=%s", command.name, serial)
             mqtt_result = await mqtt_result_waiter(serial)
             if mqtt_result is not None:
+                _logger.debug(
+                    "Remote control %s resolved via MQTT success=%s state=%s",
+                    command.name,
+                    mqtt_result.success,
+                    mqtt_result.control_state,
+                )
                 return mqtt_result
+            _logger.debug("Remote control %s MQTT waiter returned no result; falling back to polling", command.name)
         except Exception:
             _logger.debug("MQTT remote control wait failed; falling back to polling", exc_info=True)
 
@@ -581,6 +590,12 @@ async def _poll_remote_control_once(
             )
 
     parsed = _parse_control_result(latest if isinstance(latest, dict) else {})
+    _logger.debug(
+        "Remote control %s final parsed result success=%s state=%s",
+        command.name,
+        parsed.success,
+        parsed.control_state,
+    )
     if parsed.control_state == 2:
         msg = (
             (latest.get("message") or latest.get("msg") or "controlState=2")
