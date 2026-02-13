@@ -5,6 +5,7 @@ from pybyd.models.control import ControlState, RemoteCommand, RemoteControlResul
 from pybyd.models.energy import EnergyConsumption
 from pybyd.models.gps import GpsInfo
 from pybyd.models.hvac import HvacStatus
+from pybyd.models.push_notification import PushNotificationState
 from pybyd.models.realtime import (
     AirCirculationMode,
     ChargingState,
@@ -19,6 +20,7 @@ from pybyd.models.realtime import (
     VehicleState,
     WindowState,
 )
+from pybyd.models.smart_charging import SmartChargingSchedule
 from pybyd.models.token import AuthToken
 from pybyd.models.vehicle import EmpowerRange, Vehicle
 
@@ -37,9 +39,11 @@ __all__ = [
     "LockState",
     "OnlineState",
     "PowerGear",
+    "PushNotificationState",
     "RemoteCommand",
     "RemoteControlResult",
     "SeatHeatVentState",
+    "SmartChargingSchedule",
     "TirePressureUnit",
     "Vehicle",
     "VehicleRealtimeData",

@@ -17,7 +17,12 @@ from pybyd._api.energy import energy_from_realtime_cache, fetch_energy_consumpti
 from pybyd._api.gps import poll_gps_info
 from pybyd._api.hvac import fetch_hvac_status
 from pybyd._api.login import build_login_request, parse_login_response
+from pybyd._api.push_notifications import get_push_state as _get_push_state
+from pybyd._api.push_notifications import set_push_state as _set_push_state
 from pybyd._api.realtime import poll_vehicle_realtime
+from pybyd._api.smart_charging import save_charging_schedule as _save_charging_schedule
+from pybyd._api.smart_charging import toggle_smart_charging as _toggle_smart_charging
+from pybyd._api.vehicle_settings import rename_vehicle as _rename_vehicle
 from pybyd._api.vehicles import build_list_request, parse_vehicle_list
 from pybyd._cache import VehicleDataCache
 from pybyd._constants import SESSION_EXPIRED_CODES
@@ -38,6 +43,7 @@ from pybyd.models.control import RemoteCommand, RemoteControlResult
 from pybyd.models.energy import EnergyConsumption
 from pybyd.models.gps import GpsInfo
 from pybyd.models.hvac import HvacStatus
+from pybyd.models.push_notification import PushNotificationState
 from pybyd.models.realtime import VehicleRealtimeData
 from pybyd.models.token import AuthToken
 from pybyd.models.vehicle import Vehicle
@@ -1513,3 +1519,189 @@ class BydClient:
             self.invalidate_session()
             session = await self.ensure_session()
             return await fetch_charging_status(self._config, session, transport, vin, cache=self._cache)
+
+    # ── Smart charging control ───────────────────────────────
+
+    async def toggle_smart_charging(self, vin: str, *, enable: bool) -> dict[str, Any]:
+        """Toggle smart charging on or off.
+
+        Parameters
+        ----------
+        vin : str
+            Vehicle Identification Number.
+        enable : bool
+            True to enable smart charging, False to disable.
+
+        Returns
+        -------
+        dict
+            Decoded API response payload.
+        """
+        session = await self.ensure_session()
+        transport = self._require_transport()
+        try:
+            return await _toggle_smart_charging(
+                self._config, session, transport, vin, enable=enable,
+            )
+        except BydApiError as exc:
+            if exc.code not in SESSION_EXPIRED_CODES:
+                raise
+            _logger.debug("Session rejected (code %s) — re-authenticating", exc.code)
+            self.invalidate_session()
+            session = await self.ensure_session()
+            return await _toggle_smart_charging(
+                self._config, session, transport, vin, enable=enable,
+            )
+
+    async def save_charging_schedule(
+        self,
+        vin: str,
+        *,
+        target_soc: int,
+        start_hour: int,
+        start_minute: int,
+        end_hour: int,
+        end_minute: int,
+    ) -> dict[str, Any]:
+        """Save a smart charging schedule.
+
+        Parameters
+        ----------
+        vin : str
+            Vehicle Identification Number.
+        target_soc : int
+            Target state of charge (0-100).
+        start_hour : int
+            Scheduled start hour (0-23).
+        start_minute : int
+            Scheduled start minute (0-59).
+        end_hour : int
+            Scheduled end hour (0-23).
+        end_minute : int
+            Scheduled end minute (0-59).
+
+        Returns
+        -------
+        dict
+            Decoded API response payload.
+        """
+        session = await self.ensure_session()
+        transport = self._require_transport()
+        try:
+            return await _save_charging_schedule(
+                self._config, session, transport, vin,
+                target_soc=target_soc,
+                start_hour=start_hour,
+                start_minute=start_minute,
+                end_hour=end_hour,
+                end_minute=end_minute,
+            )
+        except BydApiError as exc:
+            if exc.code not in SESSION_EXPIRED_CODES:
+                raise
+            _logger.debug("Session rejected (code %s) — re-authenticating", exc.code)
+            self.invalidate_session()
+            session = await self.ensure_session()
+            return await _save_charging_schedule(
+                self._config, session, transport, vin,
+                target_soc=target_soc,
+                start_hour=start_hour,
+                start_minute=start_minute,
+                end_hour=end_hour,
+                end_minute=end_minute,
+            )
+
+    # ── Vehicle settings ─────────────────────────────────────
+
+    async def rename_vehicle(self, vin: str, *, name: str) -> dict[str, Any]:
+        """Rename a vehicle (set its display alias).
+
+        Parameters
+        ----------
+        vin : str
+            Vehicle Identification Number.
+        name : str
+            New display name for the vehicle.
+
+        Returns
+        -------
+        dict
+            Decoded API response payload.
+        """
+        session = await self.ensure_session()
+        transport = self._require_transport()
+        try:
+            return await _rename_vehicle(
+                self._config, session, transport, vin, name=name,
+            )
+        except BydApiError as exc:
+            if exc.code not in SESSION_EXPIRED_CODES:
+                raise
+            _logger.debug("Session rejected (code %s) — re-authenticating", exc.code)
+            self.invalidate_session()
+            session = await self.ensure_session()
+            return await _rename_vehicle(
+                self._config, session, transport, vin, name=name,
+            )
+
+    # ── Push notifications ───────────────────────────────────
+
+    async def get_push_state(self, vin: str) -> PushNotificationState:
+        """Fetch push notification state for a vehicle.
+
+        Parameters
+        ----------
+        vin : str
+            Vehicle Identification Number.
+
+        Returns
+        -------
+        PushNotificationState
+            Current push notification toggle state.
+        """
+        session = await self.ensure_session()
+        transport = self._require_transport()
+        try:
+            return await _get_push_state(
+                self._config, session, transport, vin,
+            )
+        except BydApiError as exc:
+            if exc.code not in SESSION_EXPIRED_CODES:
+                raise
+            _logger.debug("Session rejected (code %s) — re-authenticating", exc.code)
+            self.invalidate_session()
+            session = await self.ensure_session()
+            return await _get_push_state(
+                self._config, session, transport, vin,
+            )
+
+    async def set_push_state(self, vin: str, *, enable: bool) -> dict[str, Any]:
+        """Set push notification state for a vehicle.
+
+        Parameters
+        ----------
+        vin : str
+            Vehicle Identification Number.
+        enable : bool
+            True to enable push notifications, False to disable.
+
+        Returns
+        -------
+        dict
+            Decoded API response payload.
+        """
+        session = await self.ensure_session()
+        transport = self._require_transport()
+        try:
+            return await _set_push_state(
+                self._config, session, transport, vin, enable=enable,
+            )
+        except BydApiError as exc:
+            if exc.code not in SESSION_EXPIRED_CODES:
+                raise
+            _logger.debug("Session rejected (code %s) — re-authenticating", exc.code)
+            self.invalidate_session()
+            session = await self.ensure_session()
+            return await _set_push_state(
+                self._config, session, transport, vin, enable=enable,
+            )
