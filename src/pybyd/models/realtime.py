@@ -8,7 +8,7 @@ from __future__ import annotations
 import enum
 from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from pybyd.ingestion.normalize import (
     non_negative_or_zero,
@@ -278,13 +278,13 @@ class VehicleRealtimeData(BaseModel):
 
     # --- Energy consumption ---
     total_power: float | None
-    total_energy: str | None
+    total_energy: str | None = None
     """Total energy (string, '--' when unavailable)."""
-    nearest_energy_consumption: str | None
+    nearest_energy_consumption: str | None = None
     """Nearest energy consumption (string, '--' when unavailable)."""
-    nearest_energy_consumption_unit: str | None
+    nearest_energy_consumption_unit: str | None = None
     """Unit for nearest energy consumption."""
-    recent_50km_energy: str | None
+    recent_50km_energy: str | None = None
     """Recent 50km energy (string, '--' when unavailable)."""
 
     # --- Fuel (hybrid vehicles) ---
@@ -330,7 +330,7 @@ class VehicleRealtimeData(BaseModel):
     # --- Metadata ---
     timestamp: int | None
     """Data timestamp from the ``time`` field."""
-    raw: dict[str, Any]
+    raw: dict[str, Any] = Field(default_factory=dict)
     """Full API response dict."""
 
     @classmethod

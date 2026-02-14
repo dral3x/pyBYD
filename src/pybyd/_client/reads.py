@@ -5,6 +5,7 @@ These functions keep `client.py` small without changing the public API.
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 from pybyd._api.charging import fetch_charging_status
@@ -28,6 +29,22 @@ from pybyd.models.realtime import VehicleRealtimeData
 from pybyd.models.requests import GpsInfoRequest, SetPushStateRequest, VehicleRealtimeRequest
 from pybyd.models.vehicle import Vehicle
 from pybyd.state.events import IngestionEvent, IngestionSource, StateSection
+
+
+def _normalize_epoch_seconds(value: Any) -> float | None:
+    """Normalize an epoch-like value into seconds (supports sec/ms)."""
+    if value is None:
+        return None
+    try:
+        ts = float(value)
+    except (TypeError, ValueError):
+        return None
+    if ts <= 0:
+        return None
+    # Heuristic: ms epochs are > ~1e12
+    if ts > 1_000_000_000_000:
+        ts = ts / 1000
+    return ts
 
 if TYPE_CHECKING:
     from pybyd.client import BydClient
@@ -69,6 +86,16 @@ async def get_vehicle_realtime(
         poll_interval=poll_interval,
         stale_after=stale_after,
     )
+
+    # Short-circuit when store data is fresh enough.
+    if request.stale_after is not None and request.stale_after > 0:
+        snapshot = client.store.get_section(request.vin, StateSection.REALTIME)
+        if snapshot:
+            ts = _normalize_epoch_seconds(snapshot.get("timestamp"))
+            if ts is not None:
+                age = (time.time() - ts)
+                if age >= 0 and age < request.stale_after:
+                    return VehicleRealtimeData.model_validate(snapshot)
 
     def _apply_http_snapshot(model: VehicleRealtimeData, raw: dict[str, Any]) -> None:
         apply_model_to_store(
