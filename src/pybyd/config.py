@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import dataclasses
 import os
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def _env_bool(value: str | None, default: bool) -> bool:
@@ -18,13 +19,19 @@ def _env_bool(value: str | None, default: bool) -> bool:
     return default
 
 
-@dataclasses.dataclass(frozen=True)
-class DeviceProfile:
+class DeviceProfile(BaseModel):
     """Device identity fields sent with every request.
 
     These correspond to the outer payload fields that identify
     the mobile device to the BYD API.
     """
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        validate_default=True,
+        str_strip_whitespace=True,
+    )
 
     ostype: str = "and"
     imei: str = "BANGCLE01234"
@@ -41,8 +48,7 @@ class DeviceProfile:
     os_version: str = "35"
 
 
-@dataclasses.dataclass(frozen=True)
-class BydConfig:
+class BydConfig(BaseModel):
     """Client configuration.
 
     Parameters
@@ -90,6 +96,13 @@ class BydConfig:
         Device identity fields.
     """
 
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        validate_default=True,
+        str_strip_whitespace=True,
+    )
+
     username: str
     password: str
     base_url: str = "https://dilinkappoversea-eu.byd.auto"
@@ -107,7 +120,7 @@ class BydConfig:
     mqtt_keepalive: int = 120
     mqtt_command_timeout: float = 8.0
     api_trace_enabled: bool = False
-    device: DeviceProfile = dataclasses.field(default_factory=DeviceProfile)
+    device: DeviceProfile = Field(default_factory=DeviceProfile)
 
     @classmethod
     def from_env(cls, **overrides: Any) -> BydConfig:
@@ -153,9 +166,9 @@ class BydConfig:
         # Allow overriding device fields via a nested dict
         device_overrides = overrides.pop("device", None)
         if isinstance(device_overrides, dict):
-            device_kwargs.update(device_overrides)
+            device_kwargs.update({str(k): str(v) for k, v in device_overrides.items()})
         elif isinstance(device_overrides, DeviceProfile):
-            device_kwargs = dataclasses.asdict(device_overrides)
+            device_kwargs = {k: str(v) for k, v in device_overrides.model_dump().items()}
 
         device = DeviceProfile(**device_kwargs) if device_kwargs else DeviceProfile()
 

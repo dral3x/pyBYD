@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-import dataclasses
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict
 
-@dataclasses.dataclass(frozen=True)
-class SmartChargingSchedule:
+
+class SmartChargingSchedule(BaseModel):
     """Charging schedule configuration for a vehicle."""
+
+    model_config = ConfigDict(frozen=True)
 
     vin: str
     """Vehicle Identification Number."""

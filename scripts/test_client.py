@@ -511,9 +511,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--layers",
         action="store_true",
-        help=(
-            "Print all request/response layers for each endpoint, including " "best-effort decrypted inner payloads."
-        ),
+        help=("Print all request/response layers for each endpoint, including best-effort decrypted inner payloads."),
     )
     parser.add_argument(
         "--strict",

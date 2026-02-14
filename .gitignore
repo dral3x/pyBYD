@@ -32,6 +32,7 @@ src/pybyd/_version.py
 .vscode/
 *.swp
 *.swo
+pyrightconfig.json
 
 # OS
 .DS_Store

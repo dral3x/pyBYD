@@ -38,6 +38,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
+
 # Allow running from the repo root without installing the package.
 _repo = Path(__file__).resolve().parent.parent
 _src = _repo / "src"
@@ -49,8 +51,10 @@ from pybyd import BydClient, BydConfig  # noqa: E402
 # ── helpers ──────────────────────────────────────────────────
 
 
-def _dc_to_dict(obj: Any) -> dict[str, Any]:
-    """Convert a dataclass to a plain dict (shallow, keeps raw)."""
+def _model_to_dict(obj: Any) -> dict[str, Any]:
+    """Convert a model object to a plain dict (shallow, keeps raw)."""
+    if isinstance(obj, BaseModel):
+        return obj.model_dump()
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return {f.name: getattr(obj, f.name) for f in dataclasses.fields(obj)}
     return {"__repr__": repr(obj)}
@@ -75,7 +79,11 @@ def _format_field(key: str, value: Any, indent: int = 2) -> str:
             return f"{prefix}{key}: []"
         lines = [f"{prefix}{key}:"]
         for item in value:
-            if dataclasses.is_dataclass(item) and not isinstance(item, type):
+            if isinstance(item, BaseModel):
+                for f_key, f_val in item.model_dump().items():
+                    lines.append(_format_field(str(f_key), f_val, indent + 4))
+                lines.append("")
+            elif dataclasses.is_dataclass(item) and not isinstance(item, type):
                 for f in dataclasses.fields(item):
                     lines.append(_format_field(f.name, getattr(item, f.name), indent + 4))
                 lines.append("")
@@ -90,7 +98,7 @@ def _format_field(key: str, value: Any, indent: int = 2) -> str:
 def _print_model(name: str, obj: Any, out: list[str]) -> dict[str, Any]:
     """Pretty-print a dataclass model and return its dict form."""
     out.append(_section(name))
-    d = _dc_to_dict(obj)
+    d = _model_to_dict(obj)
     for key, value in d.items():
         if key == "raw":
             continue
@@ -235,9 +243,10 @@ async def main() -> None:
     out.append(f"  app_ver   : {config.app_version} (inner {config.app_inner_version})")
 
     async with BydClient(config) as client:
-        token = await client.login()
-        out.append(f"  user_id   : {token.user_id}")
-        result["user_id"] = token.user_id
+        await client.login()
+        session = await client.ensure_session()
+        out.append(f"  user_id   : {session.user_id}")
+        result["user_id"] = session.user_id
 
         if not args.json_mode:
             print("\n".join(out))

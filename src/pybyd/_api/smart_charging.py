@@ -23,6 +23,7 @@ from pybyd.exceptions import (
     BydEndpointNotSupportedError,
     BydSessionExpiredError,
 )
+from pybyd.models.command_responses import CommandAck
 from pybyd.session import Session
 
 _logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ async def toggle_smart_charging(
     vin: str,
     *,
     enable: bool,
-) -> dict[str, Any]:
+) -> CommandAck:
     """Toggle smart charging on or off.
 
     Parameters
@@ -132,11 +133,14 @@ async def toggle_smart_charging(
         )
 
     encrypted_inner = response.get("respondData")
-    if not encrypted_inner:
-        return {}
-    data = json.loads(aes_decrypt_utf8(encrypted_inner, content_key))
+    raw: dict[str, Any] = {}
+    if encrypted_inner:
+        data = json.loads(aes_decrypt_utf8(encrypted_inner, content_key))
+        if isinstance(data, dict):
+            raw = data
     _logger.debug("Smart charge toggle response vin=%s enable=%s", vin, enable)
-    return data if isinstance(data, dict) else {}
+    result = raw.get("result")
+    return CommandAck(vin=vin, result=result if isinstance(result, str) else None, raw=raw)
 
 
 async def save_charging_schedule(
@@ -150,7 +154,7 @@ async def save_charging_schedule(
     start_minute: int,
     end_hour: int,
     end_minute: int,
-) -> dict[str, Any]:
+) -> CommandAck:
     """Save a smart charging schedule.
 
     Parameters
@@ -206,8 +210,11 @@ async def save_charging_schedule(
         )
 
     encrypted_inner = response.get("respondData")
-    if not encrypted_inner:
-        return {}
-    data = json.loads(aes_decrypt_utf8(encrypted_inner, content_key))
+    raw: dict[str, Any] = {}
+    if encrypted_inner:
+        data = json.loads(aes_decrypt_utf8(encrypted_inner, content_key))
+        if isinstance(data, dict):
+            raw = data
     _logger.debug("Smart charge schedule saved vin=%s target_soc=%d", vin, target_soc)
-    return data if isinstance(data, dict) else {}
+    result = raw.get("result")
+    return CommandAck(vin=vin, result=result if isinstance(result, str) else None, raw=raw)

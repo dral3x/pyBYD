@@ -45,9 +45,12 @@ def build_token_outer_envelope(
     """
     req_timestamp = str(now_ms)
 
+    content_key = session.content_key()
+    sign_key = session.sign_key()
+
     encry_data = aes_encrypt_hex(
         json.dumps(inner, separators=(",", ":")),
-        session.content_key,
+        content_key,
     )
 
     sign_fields: dict[str, str] = {
@@ -58,7 +61,7 @@ def build_token_outer_envelope(
         "language": config.language,
         "reqTimestamp": req_timestamp,
     }
-    sign = sha1_mixed(build_sign_string(sign_fields, session.sign_key))
+    sign = sha1_mixed(build_sign_string(sign_fields, sign_key))
 
     outer: dict[str, Any] = {
         "countryCode": config.country_code,
@@ -80,4 +83,4 @@ def build_token_outer_envelope(
         outer["userType"] = user_type
     outer["checkcode"] = compute_checkcode(outer)
 
-    return outer, session.content_key
+    return outer, content_key

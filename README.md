@@ -22,8 +22,9 @@ Thanks!
 
 - Polling support for live vehicle metrics (realtime, GPS, energy, charging, HVAC).
 - Remote command support for lock/unlock, horn/lights, and climate actions.
-- Built-in per-vehicle cache layer that merges partial responses, reducing load on BYD's servers
-- MQTT-assisted updates that feeds in to the cache layer
+- Deterministic per-vehicle state store that merges partial responses predictably
+- MQTT-assisted updates that enrich the state store between HTTP polls
+- Typed models implemented with Pydantic
 
 ## Requirements
 
@@ -41,7 +42,6 @@ pip install pybyd
 Or install from source:
 
 ```bash
-cd lib
 pip install -e ".[dev]"
 ```
 
@@ -59,7 +59,6 @@ async def main():
     )
 
     async with BydClient(config) as client:
-        token = await client.login()
         vehicles = await client.get_vehicles()
 
         vin = vehicles[0].vin
@@ -85,13 +84,15 @@ asyncio.run(main())
 | `get_gps_info(vin)` | GPS latitude, longitude, speed, heading |
 | `get_energy_consumption(vin)` | Energy and fuel consumption stats |
 | `verify_control_password(vin)` | Verify remote control PIN/password for a VIN |
-| `remote_control(vin, command)` | Send a remote command (see below) |
 | `lock(vin)` | Lock doors |
 | `unlock(vin)` | Unlock doors |
 | `flash_lights(vin)` | Flash lights |
-| `honk_horn(vin)` | Honk horn |
+| `find_car(vin)` | Find my car |
 | `start_climate(vin)` | Start climate control |
 | `stop_climate(vin)` | Stop climate control |
+| `schedule_climate(vin, ...)` | Schedule climate control |
+| `set_seat_climate(vin, ...)` | Seat heating/ventilation |
+| `set_battery_heat(vin, on=...)` | Battery heating |
 
 ## Configuration
 
@@ -110,11 +111,23 @@ supported for CI and container deployments.
 
 ## Remote control
 
-```python
-from pybyd import RemoteCommand
+Remote commands require a control PIN configured as `BydConfig(control_pin=...)`
+or passed explicitly via `command_pwd=...`.
 
-result = await client.remote_control(vin, RemoteCommand.LOCK)
-print(result.success)  # True / False
+```python
+# Lock/unlock
+result = await client.lock(vin)
+print(result.success)
+
+# Climate control
+result = await client.start_climate(vin, temperature_c=21.0, time_span=10)
+
+# Hass-byd style presets
+await client.start_climate(vin, preset="max_heat", time_span=10)
+await client.start_climate(vin, preset="max_cool", time_span=10)
+
+# Note: BYD encodes duration as a small code; pyBYD accepts minutes (10/15/20/25/30)
+# and converts internally.
 ```
 
 Remote commands use a two-phase trigger-and-poll pattern. The poll
@@ -134,13 +147,12 @@ This preserves reliability while reducing command-result latency when
 MQTT is available.
 
 On successful command completion, pyBYD applies an optimistic update to
-cached command-related fields (for example lock/window/climate/seat/battery-heat
-state). This allows integrations to reflect the desired target state
-immediately while waiting for the next backend telemetry refresh.
+state-store command-related fields (for example lock/window/climate state).
+This allows integrations to reflect the desired target state immediately
+while waiting for the next backend telemetry refresh.
 
-MQTT `vehicleInfo` payloads are also merged into the internal cache and
-propagated across realtime/HVAC/charging/energy snapshots, keeping read
-methods as up to date as possible between explicit API polls.
+MQTT `vehicleInfo` payloads are merged into the internal state store,
+keeping read methods as up to date as possible between explicit API polls.
 
 MQTT-related configuration:
 
@@ -173,7 +185,6 @@ except BydApiError as e:
 ## Development
 
 ```bash
-cd lib
 pip install -e ".[dev]"
 pytest                    # run tests
 ruff check .              # lint

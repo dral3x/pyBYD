@@ -28,6 +28,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
+
 _repo = Path(__file__).resolve().parent.parent
 _src = _repo / "src"
 if _src.is_dir():
@@ -119,6 +121,8 @@ class FieldEvidence:
 def _safe_json_value(value: Any) -> Any:
     if isinstance(value, enum.Enum):
         return {"name": value.name, "value": value.value}
+    if isinstance(value, BaseModel):
+        return _safe_json_value(value.model_dump())
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return {k: _safe_json_value(v) for k, v in dataclasses.asdict(value).items()}
     if isinstance(value, dict):
@@ -133,6 +137,8 @@ def _safe_json_value(value: Any) -> Any:
 def _parsed_dataclass_dict(obj: Any) -> dict[str, Any]:
     if obj is None:
         return {}
+    if isinstance(obj, BaseModel):
+        return obj.model_dump(exclude={"raw"})
     if not dataclasses.is_dataclass(obj) or isinstance(obj, type):
         return {"__repr__": repr(obj)}
     out: dict[str, Any] = {}

@@ -31,7 +31,9 @@ from pybyd.exceptions import (
     BydRemoteControlError,
     BydSessionExpiredError,
 )
-from pybyd.models.control import ControlState, RemoteCommand, RemoteControlResult
+from pybyd.ingestion.normalize import safe_int
+from pybyd.models.command_responses import VerifyControlPasswordResponse
+from pybyd.models.control import RemoteCommand, RemoteControlResult
 from pybyd.session import Session
 
 _logger = logging.getLogger(__name__)
@@ -41,19 +43,6 @@ ENDPOINT_NOT_SUPPORTED_CODES: frozenset[str] = frozenset({"1001"})
 REMOTE_CONTROL_SERVICE_ERROR_CODES: frozenset[str] = frozenset({"1009"})
 REMOTE_CONTROL_ENDPOINTS: frozenset[str] = frozenset({"/control/remoteControl", "/control/remoteControlResult"})
 VERIFY_CONTROL_PASSWORD_ENDPOINT = "/vehicle/vehicleswitch/verifyControlPassword"
-
-
-def _safe_int(value: Any) -> int | None:
-    """Convert a value to int, returning None on failure."""
-    if value is None or value == "":
-        return None
-    try:
-        result = float(value)
-        if result != result:  # NaN check
-            return None
-        return int(result)
-    except (ValueError, TypeError):
-        return None
 
 
 def _build_control_inner(
@@ -124,7 +113,7 @@ async def verify_control_password(
     transport: SecureTransport,
     vin: str,
     command_pwd: str,
-) -> dict[str, Any]:
+) -> VerifyControlPasswordResponse:
     """Verify remote control password for a vehicle.
 
     Calls ``/vehicle/vehicleswitch/verifyControlPassword`` and returns the
@@ -169,10 +158,10 @@ async def verify_control_password(
 
     encrypted_inner = response.get("respondData")
     if not encrypted_inner:
-        return {}
+        return VerifyControlPasswordResponse(vin=vin, ok=None, raw={})
     decrypted_inner = aes_decrypt_utf8(encrypted_inner, content_key)
     if not decrypted_inner or not decrypted_inner.strip():
-        return {}
+        return VerifyControlPasswordResponse(vin=vin, ok=None, raw={})
 
     try:
         parsed = json.loads(decrypted_inner)
@@ -185,7 +174,11 @@ async def verify_control_password(
                 code="5005",
                 endpoint=VERIFY_CONTROL_PASSWORD_ENDPOINT,
             )
-        return cast(dict[str, Any], parsed)
+
+        raw = cast(dict[str, Any], parsed)
+        ok_value = raw.get("ok")
+        ok = ok_value if isinstance(ok_value, bool) else None
+        return VerifyControlPasswordResponse(vin=vin, ok=ok, raw=raw)
     except json.JSONDecodeError as exc:
         raise BydControlPasswordError(
             (
@@ -206,7 +199,7 @@ def _is_remote_control_ready(data: dict[str, Any]) -> bool:
     """
     if not data:
         return False
-    control_state = _safe_int(data.get("controlState"))
+    control_state = safe_int(data.get("controlState"))
     if control_state is not None and control_state != 0:
         return True
     if "res" in data:
@@ -215,38 +208,9 @@ def _is_remote_control_ready(data: dict[str, Any]) -> bool:
 
 
 def _parse_control_result(data: dict[str, Any]) -> RemoteControlResult:
-    """Parse raw remote control dict into a typed dataclass.
+    """Parse raw remote control dict into a typed model."""
 
-    The API may return results in two formats:
-    - Polled result: ``{"controlState": 1, "requestSerial": "..."}``
-    - Immediate result: ``{"res": 2, "message": "Closing windows successful"}``
-
-    For immediate results, ``res == 2`` maps to SUCCESS.
-    """
-    # Check for immediate result format (res field)
-    res_val = _safe_int(data.get("res"))
-    if res_val is not None:
-        # res=2 is observed as success in immediate responses
-        control_state = ControlState.SUCCESS if res_val == 2 else ControlState.FAILURE
-        return RemoteControlResult(
-            control_state=control_state,
-            success=control_state == ControlState.SUCCESS,
-            request_serial=data.get("requestSerial"),
-            raw=data,
-        )
-
-    # Standard polled result format (controlState field)
-    raw_state = _safe_int(data.get("controlState")) or 0
-    try:
-        control_state = ControlState(raw_state)
-    except ValueError:
-        control_state = ControlState.PENDING
-    return RemoteControlResult(
-        control_state=control_state,
-        success=control_state == ControlState.SUCCESS,
-        request_serial=data.get("requestSerial"),
-        raw=data,
-    )
+    return RemoteControlResult.model_validate(data)
 
 
 def parse_remote_control_result_data(data: dict[str, Any]) -> RemoteControlResult:
@@ -516,7 +480,7 @@ async def _poll_remote_control_once(
     else:
         # All rate-limit retries exhausted
         raise BydRateLimitError(
-            f"Remote control {command.name} rate-limited after " f"{rate_limit_retries} retries (code 6024)",
+            f"Remote control {command.name} rate-limited after {rate_limit_retries} retries (code 6024)",
             code="6024",
             endpoint="/control/remoteControl",
         )

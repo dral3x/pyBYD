@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import dataclasses
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict
 
-@dataclasses.dataclass(frozen=True)
-class AuthToken:
+
+class AuthToken(BaseModel):
     """Token returned after successful login.
 
     Parameters
@@ -21,6 +21,8 @@ class AuthToken:
     raw : dict
         Full decoded token dict for access to additional fields.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     user_id: str
     sign_token: str

@@ -5,26 +5,26 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import secrets
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any, cast
 
 import paho.mqtt.client as mqtt
+from pydantic import BaseModel, ConfigDict
 
-from pybyd._api._envelope import build_token_outer_envelope
+from pybyd._api._common import build_inner_base, post_token_json
 from pybyd._crypto.aes import aes_decrypt_utf8
 from pybyd._crypto.hashing import md5_hex
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
-from pybyd.exceptions import BydApiError, BydError
+from pybyd.exceptions import BydError
 from pybyd.session import Session
 
 
-@dataclass(frozen=True)
-class MqttBootstrap:
+class MqttBootstrap(BaseModel):
     """Broker/session data required to connect to BYD MQTT."""
+
+    model_config = ConfigDict(frozen=True)
 
     user_id: str
     broker_host: str
@@ -35,9 +35,10 @@ class MqttBootstrap:
     password: str
 
 
-@dataclass(frozen=True)
-class MqttEvent:
+class MqttEvent(BaseModel):
     """Normalized decrypted MQTT event envelope."""
+
+    model_config = ConfigDict(frozen=True)
 
     event: str
     vin: str | None
@@ -45,9 +46,10 @@ class MqttEvent:
     payload: dict[str, Any]
 
 
-@dataclass(frozen=True)
-class MqttPayloadLayers:
+class MqttPayloadLayers(BaseModel):
     """MQTT payload representation across encryption/decode layers."""
+
+    model_config = ConfigDict(frozen=True)
 
     raw_bytes: bytes
     raw_ascii: str
@@ -89,31 +91,15 @@ async def _fetch_emq_broker(
     session: Session,
     transport: SecureTransport,
 ) -> str:
-    now_ms = int(time.time() * 1000)
-    inner: dict[str, str] = {
-        "deviceType": config.device.device_type,
-        "imeiMD5": config.device.imei_md5,
-        "networkType": config.device.network_type,
-        "random": secrets.token_hex(16).upper(),
-        "timeStamp": str(now_ms),
-        "version": config.app_inner_version,
-    }
-    outer, content_key = build_token_outer_envelope(config, session, inner, now_ms)
-    response = await transport.post_secure("/app/emqAuth/getEmqBrokerIp", outer)
-
-    code = str(response.get("code", ""))
-    if code != "0":
-        raise BydApiError(
-            f"Broker lookup failed: code={code} message={response.get('message', '')}",
-            code=code,
-            endpoint="/app/emqAuth/getEmqBrokerIp",
-        )
-
-    respond_data = response.get("respondData")
-    if not isinstance(respond_data, str) or not respond_data:
-        raise BydError("Broker lookup response missing respondData")
-
-    decoded = json.loads(aes_decrypt_utf8(respond_data, content_key))
+    endpoint = "/app/emqAuth/getEmqBrokerIp"
+    inner = build_inner_base(config)
+    decoded = await post_token_json(
+        endpoint=endpoint,
+        config=config,
+        session=session,
+        transport=transport,
+        inner=inner,
+    )
     if not isinstance(decoded, dict):
         raise BydError("Broker lookup response inner payload is not an object")
 

@@ -23,7 +23,7 @@ URL base: https://dilinkappoversea-eu.byd.auto
 | Endpoint (path) | Purpose | Implementation |
 |---|---|---|
 | `/app/account/login` | Authentication | `src/pybyd/_api/login.py` |
-| `/app/account/getAllListByUserId` | Vehicle list | `src/pybyd/_api/vehicles.py` |
+| `/app/account/getAllListByUserId` | Vehicle list | `src/pybyd/ingestion/vehicles.py` |
 | `/vehicleInfo/vehicle/vehicleRealTimeRequest` | Realtime trigger | `src/pybyd/_api/realtime.py` |
 | `/vehicleInfo/vehicle/vehicleRealTimeResult` | Realtime poll | `src/pybyd/_api/realtime.py` |
 | `/control/getStatusNow` | HVAC status | `src/pybyd/_api/hvac.py` |
@@ -296,7 +296,9 @@ URL: https://dilinkappoversea-eu.byd.auto/app/account/getAllListByUserId
 
 Model: `Vehicle`
 
-Parser: `src/pybyd/_api/vehicles.py`
+Parser: `src/pybyd/ingestion/vehicles.py`
+
+Note: Vehicle list parsing is implemented in the ingestion layer.
 
 | API field | Python field | Type | Values / notes |
 |---|---|---|---|
@@ -371,6 +373,35 @@ Observed behavior in pyBYD:
 | `CLOSE_WINDOWS` | `CLOSEWINDOW` | close windows |
 | `SEAT_CLIMATE` | `VENTILATIONHEATING` | seat heat/vent |
 | `BATTERY_HEAT` | `BATTERYHEAT` | battery heat |
+
+### Control params (`controlParamsMap`)
+
+Some remote commands accept a command-specific parameter object sent as the
+``controlParamsMap`` field in the *inner* payload. The API expects
+``controlParamsMap`` to be a **JSON-encoded string** (not a nested object).
+
+pyBYD provides typed builders for these maps:
+
+- `ClimateStartParams` (for `OPENAIR`)
+- `ClimateScheduleParams` (for `BOOKINGAIR`)
+- `SeatClimateParams` (for `VENTILATIONHEATING`, mapping still being verified)
+- `BatteryHeatParams` (for `BATTERYHEAT`, key name still being verified)
+
+Known/used HVAC keys for `OPENAIR`/`BOOKINGAIR` (confirmed by integration usage
+and live captures; value meanings are still partly unconfirmed):
+
+| BYD key | Python arg/model field | Notes |
+|---|---|---|
+| `mainSettingTemp` | `temperature` / `temperature_c` | temperature is BYD scale 1-17 (15-31°C); pyBYD can convert from °C |
+| `copilotSettingTemp` | `copilot_temperature` / `copilot_temperature_c` | passenger temperature scale |
+| `timeSpan` | `time_span` | duration code: 1=10m, 2=15m, 3=20m, 4=25m, 5=30m (pyBYD accepts either code or 10/15/20/25/30 minutes and normalizes) |
+| `cycleMode` | `cycle_mode` | recirculation code (unconfirmed) |
+| `windLevel` | `wind_level` | fan speed code (unconfirmed) |
+| `remoteMode` | `remote_mode` | remote mode code (unconfirmed) |
+| `airAccuracy` | `air_accuracy` | air quality/accuracy code (unconfirmed) |
+| `airConditioningMode` | `air_conditioning_mode` | A/C mode code (unconfirmed) |
+| `bookingId` | `booking_id` | schedule only |
+| `bookingTime` | `booking_time` | schedule only (epoch seconds) |
 
 ### Result fields
 

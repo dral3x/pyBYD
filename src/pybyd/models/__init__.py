@@ -1,7 +1,15 @@
 """Data models for BYD API responses."""
 
 from pybyd.models.charging import ChargingStatus
-from pybyd.models.control import ControlState, RemoteCommand, RemoteControlResult
+from pybyd.models.command_responses import CommandAck, VerifyControlPasswordResponse
+from pybyd.models.control import ControlState, RemoteControlResult
+from pybyd.models.control_params import (
+    BatteryHeatParams,
+    ClimateScheduleParams,
+    ClimateStartParams,
+    ControlCallOptions,
+    SeatClimateParams,
+)
 from pybyd.models.energy import EnergyConsumption
 from pybyd.models.gps import GpsInfo
 from pybyd.models.hvac import HvacStatus
@@ -29,8 +37,13 @@ __all__ = [
     "AuthToken",
     "ChargingState",
     "ChargingStatus",
+    "CommandAck",
     "ConnectState",
     "ControlState",
+    "BatteryHeatParams",
+    "ClimateScheduleParams",
+    "ClimateStartParams",
+    "ControlCallOptions",
     "DoorOpenState",
     "EmpowerRange",
     "EnergyConsumption",
@@ -40,13 +53,14 @@ __all__ = [
     "OnlineState",
     "PowerGear",
     "PushNotificationState",
-    "RemoteCommand",
     "RemoteControlResult",
+    "SeatClimateParams",
     "SeatHeatVentState",
     "SmartChargingSchedule",
     "TirePressureUnit",
     "Vehicle",
     "VehicleRealtimeData",
     "VehicleState",
+    "VerifyControlPasswordResponse",
     "WindowState",
 ]

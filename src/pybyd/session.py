@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import dataclasses
-import functools
 import time
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from pybyd._crypto.hashing import md5_hex
 
@@ -14,8 +14,7 @@ from pybyd._crypto.hashing import md5_hex
 DEFAULT_SESSION_TTL: float = 12 * 3600
 
 
-@dataclasses.dataclass
-class Session:
+class Session(BaseModel):
     """Mutable session state after successful login..
 
     Parameters
@@ -34,13 +33,19 @@ class Session:
         considered expired and should be refreshed via a new login.
     """
 
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        validate_default=True,
+        str_strip_whitespace=True,
+    )
+
     user_id: str
     sign_token: str
     encry_token: str
-    created_at: float = dataclasses.field(default_factory=time.monotonic)
+    created_at: float = Field(default_factory=time.monotonic)
     ttl: float = DEFAULT_SESSION_TTL
 
-    @functools.cached_property
     def content_key(self) -> str:
         """AES key for encrypting/decrypting inner payload data.
 
@@ -48,7 +53,6 @@ class Session:
         """
         return md5_hex(self.encry_token)
 
-    @functools.cached_property
     def sign_key(self) -> str:
         """Key used in request signature computation.
 

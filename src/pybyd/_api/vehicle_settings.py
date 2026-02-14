@@ -22,6 +22,7 @@ from pybyd.exceptions import (
     BydEndpointNotSupportedError,
     BydSessionExpiredError,
 )
+from pybyd.models.command_responses import CommandAck
 from pybyd.session import Session
 
 _logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ async def rename_vehicle(
     vin: str,
     *,
     name: str,
-) -> dict[str, Any]:
+) -> CommandAck:
     """Rename a vehicle (set its alias).
 
     Parameters
@@ -97,8 +98,11 @@ async def rename_vehicle(
         )
 
     encrypted_inner = response.get("respondData")
-    if not encrypted_inner:
-        return {}
-    data = json.loads(aes_decrypt_utf8(encrypted_inner, content_key))
+    raw: dict[str, Any] = {}
+    if encrypted_inner:
+        data = json.loads(aes_decrypt_utf8(encrypted_inner, content_key))
+        if isinstance(data, dict):
+            raw = data
     _logger.debug("Vehicle renamed vin=%s name=%s", vin, name)
-    return data if isinstance(data, dict) else {}
+    result = raw.get("result")
+    return CommandAck(vin=vin, result=result if isinstance(result, str) else None, raw=raw)

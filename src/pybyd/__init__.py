@@ -2,10 +2,6 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-try:
-    __version__ = version("pybyd")
-except PackageNotFoundError:
-    __version__ = "0+local"
 from pybyd.client import BydClient
 from pybyd.config import BydConfig, DeviceProfile
 from pybyd.exceptions import (
@@ -25,9 +21,14 @@ from pybyd.exceptions import (
 from pybyd.models import (
     AirCirculationMode,
     AuthToken,
+    BatteryHeatParams,
     ChargingState,
     ChargingStatus,
+    ClimateScheduleParams,
+    ClimateStartParams,
+    CommandAck,
     ConnectState,
+    ControlCallOptions,
     ControlState,
     DoorOpenState,
     EnergyConsumption,
@@ -37,21 +38,28 @@ from pybyd.models import (
     OnlineState,
     PowerGear,
     PushNotificationState,
-    RemoteCommand,
     RemoteControlResult,
+    SeatClimateParams,
     SeatHeatVentState,
     SmartChargingSchedule,
     TirePressureUnit,
     Vehicle,
     VehicleRealtimeData,
     VehicleState,
+    VerifyControlPasswordResponse,
     WindowState,
 )
+
+try:
+    __version__ = version("pybyd")
+except PackageNotFoundError:
+    __version__ = "0+local"
 
 __all__ = [
     "__version__",
     "AirCirculationMode",
     "AuthToken",
+    "BatteryHeatParams",
     "BangcleError",
     "BydApiError",
     "BydAuthenticationError",
@@ -68,6 +76,10 @@ __all__ = [
     "BydTransportError",
     "ChargingState",
     "ChargingStatus",
+    "ClimateScheduleParams",
+    "ClimateStartParams",
+    "ControlCallOptions",
+    "CommandAck",
     "ConnectState",
     "ControlState",
     "DeviceProfile",
@@ -79,13 +91,14 @@ __all__ = [
     "OnlineState",
     "PowerGear",
     "PushNotificationState",
-    "RemoteCommand",
     "RemoteControlResult",
+    "SeatClimateParams",
     "SeatHeatVentState",
     "SmartChargingSchedule",
     "TirePressureUnit",
     "Vehicle",
     "VehicleRealtimeData",
     "VehicleState",
+    "VerifyControlPasswordResponse",
     "WindowState",
 ]

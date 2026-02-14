@@ -10,16 +10,10 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import secrets
-import time
 from typing import Any
 
-from pybyd._api._envelope import build_token_outer_envelope
-from pybyd._cache import VehicleDataCache
-from pybyd._constants import SESSION_EXPIRED_CODES
-from pybyd._crypto.aes import aes_decrypt_utf8
+from pybyd._api._common import build_inner_base, post_token_json
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
 from pybyd.exceptions import BydApiError, BydSessionExpiredError
@@ -27,48 +21,6 @@ from pybyd.models.gps import GpsInfo
 from pybyd.session import Session
 
 _logger = logging.getLogger(__name__)
-
-
-def _safe_float(value: Any) -> float | None:
-    """Convert a value to float, returning None on failure."""
-    if value is None or value == "":
-        return None
-    try:
-        result = float(value)
-        if result != result:  # NaN check
-            return None
-        return result
-    except (ValueError, TypeError):
-        return None
-
-
-def _safe_int(value: Any) -> int | None:
-    """Convert a value to int, returning None on failure."""
-    f = _safe_float(value)
-    if f is None:
-        return None
-    return int(f)
-
-
-def _build_gps_inner(
-    config: BydConfig,
-    vin: str,
-    now_ms: int,
-    request_serial: str | None = None,
-) -> dict[str, str]:
-    """Build the inner payload for GPS endpoints."""
-    inner: dict[str, str] = {
-        "deviceType": config.device.device_type,
-        "imeiMD5": config.device.imei_md5,
-        "networkType": config.device.network_type,
-        "random": secrets.token_hex(16).upper(),
-        "timeStamp": str(now_ms),
-        "version": config.app_inner_version,
-        "vin": vin,
-    }
-    if request_serial:
-        inner["requestSerial"] = request_serial
-    return inner
 
 
 def _is_gps_info_ready(gps_info: dict[str, Any]) -> bool:
@@ -84,31 +36,6 @@ def _is_gps_info_ready(gps_info: dict[str, Any]) -> bool:
     return not (len(keys) == 1 and keys[0] == "requestSerial")
 
 
-def _parse_gps_info(data: dict[str, Any]) -> GpsInfo:
-    """Parse raw GPS dict into a typed dataclass."""
-    # GPS data may be nested under a 'data' key
-    nested = data.get("data")
-    gps_data: dict[str, Any] = nested if isinstance(nested, dict) else data
-
-    return GpsInfo(
-        latitude=_safe_float(gps_data.get("latitude") or gps_data.get("lat") or gps_data.get("gpsLatitude")),
-        longitude=_safe_float(
-            gps_data.get("longitude") or gps_data.get("lng") or gps_data.get("lon") or gps_data.get("gpsLongitude")
-        ),
-        speed=_safe_float(gps_data.get("speed") or gps_data.get("gpsSpeed")),
-        direction=_safe_float(gps_data.get("direction") or gps_data.get("heading") or gps_data.get("course")),
-        gps_timestamp=_safe_int(
-            gps_data.get("gpsTimeStamp")
-            or gps_data.get("gpsTimestamp")
-            or gps_data.get("gpsTime")
-            or gps_data.get("time")
-            or gps_data.get("uploadTime")
-        ),
-        request_serial=data.get("requestSerial"),
-        raw=data,
-    )
-
-
 async def _fetch_gps_endpoint(
     endpoint: str,
     config: BydConfig,
@@ -118,31 +45,19 @@ async def _fetch_gps_endpoint(
     request_serial: str | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     """Fetch a single GPS endpoint, returning (gps_info_dict, next_serial)."""
-    import time
-
-    now_ms = int(time.time() * 1000)
-    inner = _build_gps_inner(config, vin, now_ms, request_serial)
-    outer, content_key = build_token_outer_envelope(config, session, inner, now_ms)
-
-    response = await transport.post_secure(endpoint, outer)
-    resp_code = str(response.get("code", ""))
-    if resp_code != "0":
-        if resp_code in SESSION_EXPIRED_CODES:
-            raise BydSessionExpiredError(
-                f"{endpoint} failed: code={resp_code} message={response.get('message', '')}",
-                code=resp_code,
-                endpoint=endpoint,
-            )
-        raise BydApiError(
-            f"{endpoint} failed: code={resp_code} message={response.get('message', '')}",
-            code=resp_code,
-            endpoint=endpoint,
-        )
-
-    gps_info = json.loads(aes_decrypt_utf8(response["respondData"], content_key))
-    next_serial = (gps_info.get("requestSerial") if isinstance(gps_info, dict) else None) or request_serial
-
-    return gps_info, next_serial
+    inner = build_inner_base(config, vin=vin, request_serial=request_serial)
+    decoded = await post_token_json(
+        endpoint=endpoint,
+        config=config,
+        session=session,
+        transport=transport,
+        inner=inner,
+        vin=vin,
+    )
+    if not isinstance(decoded, dict):
+        return {}, request_serial
+    next_serial = decoded.get("requestSerial") if isinstance(decoded.get("requestSerial"), str) else request_serial
+    return decoded, next_serial
 
 
 async def poll_gps_info(
@@ -153,8 +68,6 @@ async def poll_gps_info(
     *,
     poll_attempts: int = 10,
     poll_interval: float = 1.5,
-    cache: VehicleDataCache | None = None,
-    stale_after: float | None = None,
 ) -> GpsInfo:
     """Poll GPS info until ready or attempts exhausted.
 
@@ -183,21 +96,6 @@ async def poll_gps_info(
     BydApiError
         If the initial GPS request fails.
     """
-    if cache is not None:
-        now_ms = int(time.time() * 1000)
-        threshold = poll_interval if stale_after is None else stale_after
-        if threshold is not None and threshold > 0:
-            age = cache.get_gps_age_seconds(vin, now_ms)
-            if age is not None and age <= threshold:
-                cached = cache.get_gps(vin)
-                if cached:
-                    _logger.debug(
-                        "GPS polling skipped due to fresh cache vin=%s age_s=%.2f threshold_s=%.2f",
-                        vin,
-                        age,
-                        threshold,
-                    )
-                    return _parse_gps_info(cached)
     # Phase 1: Trigger request
     try:
         gps_info, serial = await _fetch_gps_endpoint(
@@ -211,11 +109,7 @@ async def poll_gps_info(
         _logger.debug("GPS request failed", exc_info=True)
         raise
 
-    merged_latest = (
-        cache.merge_gps(vin, gps_info)
-        if cache is not None and isinstance(gps_info, dict)
-        else (gps_info if isinstance(gps_info, dict) else {})
-    )
+    merged_latest = gps_info if isinstance(gps_info, dict) else {}
 
     _logger.debug(
         "GPS request: keys=%s serial=%s",
@@ -225,11 +119,11 @@ async def poll_gps_info(
 
     if isinstance(gps_info, dict) and _is_gps_info_ready(gps_info):
         _logger.debug("GPS data ready immediately after request vin=%s", vin)
-        return _parse_gps_info(merged_latest)
+        return GpsInfo.model_validate(merged_latest)
 
     if not serial:
         _logger.debug("GPS request returned without serial vin=%s; returning latest snapshot", vin)
-        return _parse_gps_info(merged_latest)
+        return GpsInfo.model_validate(merged_latest)
 
     # Phase 2: Poll for results
     _logger.debug(
@@ -253,9 +147,7 @@ async def poll_gps_info(
                 vin,
                 serial,
             )
-            if cache is not None and isinstance(latest, dict):
-                merged_latest = cache.merge_gps(vin, latest)
-            elif isinstance(latest, dict):
+            if isinstance(latest, dict):
                 merged_latest = latest
             _logger.debug(
                 "GPS poll attempt=%d keys=%s serial=%s",
@@ -275,4 +167,4 @@ async def poll_gps_info(
     if not ready:
         _logger.debug("GPS polling exhausted without confirmed ready data vin=%s", vin)
 
-    return _parse_gps_info(merged_latest if isinstance(merged_latest, dict) else {})
+    return GpsInfo.model_validate(merged_latest if isinstance(merged_latest, dict) else {})
