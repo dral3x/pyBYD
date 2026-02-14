@@ -805,6 +805,44 @@ def test_optimistic_overlay_clears_on_server_update() -> None:
     assert store.get_section(vin, StateSection.REALTIME).get("left_front_door_lock") == 1
 
 
+def test_optimistic_overlay_can_be_sticky() -> None:
+    now = _dt(2_000)
+    store = StateStore(
+        clock=lambda: now,
+        optimistic_ttl=timedelta(seconds=10),
+    )
+    vin = "VIN123"
+
+    store.apply(
+        IngestionEvent(
+            vin=vin,
+            section=StateSection.HVAC,
+            source=IngestionSource.HTTP,
+            observed_at=_dt(1_000),
+            payload_timestamp=1_000,
+            data={"status": 2},
+            raw={},
+        )
+    )
+    store.apply(
+        IngestionEvent(
+            vin=vin,
+            section=StateSection.HVAC,
+            source=IngestionSource.OPTIMISTIC,
+            observed_at=_dt(2_000),
+            payload_timestamp=None,
+            data={"status": 0, "ac_switch": 0},
+            raw={"__pybyd_optimistic_ttl_s": 0},
+        )
+    )
+
+    assert store.get_section(vin, StateSection.HVAC).get("status") == 0
+
+    # Advance far beyond the default TTL: sticky overlay should still be applied.
+    now = _dt(9_999)
+    assert store.get_section(vin, StateSection.HVAC).get("status") == 0
+
+
 # ---------------------------------------------------------------------------
 # Focused endpoint tests (mocked backends)
 # ---------------------------------------------------------------------------

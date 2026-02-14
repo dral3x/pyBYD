@@ -13,7 +13,9 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from pybyd.state.events import IngestionEvent, IngestionSource, StateSection
-from pybyd.state.policy import is_expired, should_accept_update
+from pybyd.state.policy import is_expired, should_accept_update, source_priority
+
+_OPTIMISTIC_TTL_SECONDS_KEY = "__pybyd_optimistic_ttl_s"
 
 
 def _utcnow() -> datetime:
@@ -33,6 +35,20 @@ def _merge_patch(target: dict[str, Any], patch: dict[str, Any]) -> None:
     if not patch:
         return
     target.update(copy.deepcopy(patch))
+
+
+def _merge_patch_fill_missing(target: dict[str, Any], patch: dict[str, Any]) -> None:
+    """Apply a patch without overwriting existing keys.
+
+    Used for older/out-of-order updates: they may carry additional fields we
+    haven't seen yet, but shouldn't be able to revert already-known values.
+    """
+
+    if not patch:
+        return
+    for key, value in patch.items():
+        if key not in target:
+            target[key] = copy.deepcopy(value)
 
 
 class SectionSnapshot(BaseModel):
@@ -92,7 +108,20 @@ class StateStore:
         now = self._clock()
 
         if event.source == IngestionSource.OPTIMISTIC:
-            expires_at = now + self._optimistic_ttl
+            ttl_seconds: float | None = None
+            if isinstance(event.raw, dict) and _OPTIMISTIC_TTL_SECONDS_KEY in event.raw:
+                value = event.raw.get(_OPTIMISTIC_TTL_SECONDS_KEY)
+                if isinstance(value, (int, float)):
+                    ttl_seconds = float(value)
+
+            if ttl_seconds is None:
+                expires_at = now + self._optimistic_ttl
+            elif ttl_seconds <= 0:
+                # "Sticky" optimistic overlay: does not expire on its own.
+                # It is still cleared by any non-optimistic update for the section.
+                expires_at = datetime.max.replace(tzinfo=UTC)
+            else:
+                expires_at = now + timedelta(seconds=ttl_seconds)
             state.optimistic[event.section] = OptimisticOverlay(
                 data=copy.deepcopy(event.data),
                 applied_at=event.observed_at,
@@ -119,8 +148,20 @@ class StateStore:
         ):
             return
 
+        # If an update is older than what we already have, it can still be useful
+        # (late-arriving partial fields), but it must not overwrite known values
+        # unless it comes from a strictly higher-priority source.
+        merge_overwrite = True
+        if incoming_ts is not None and snapshot.payload_timestamp is not None and incoming_ts < snapshot.payload_timestamp:
+            cached_prio = source_priority(snapshot.source) if snapshot.source is not None else 0
+            incoming_prio = source_priority(event.source)
+            merge_overwrite = incoming_prio > cached_prio
+
         # Merge patch into snapshot.
-        _merge_patch(snapshot.data, event.data)
+        if merge_overwrite:
+            _merge_patch(snapshot.data, event.data)
+        else:
+            _merge_patch_fill_missing(snapshot.data, event.data)
         snapshot.observed_at = event.observed_at
         snapshot.source = event.source
         # Never move payload_timestamp backwards; this preserves stale-rejection strength

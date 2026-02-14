@@ -141,3 +141,65 @@ def test_source_priority_used_when_timestamps_missing() -> None:
     section = store.get_section(vin, StateSection.HVAC)
     assert section.get("ac_switch") == 1
     assert section.get("pm") is None
+
+
+def test_lower_priority_source_cannot_overwrite_newer_timestamped_state_within_skew() -> None:
+    store = StateStore(skew_allowance_seconds=60.0)
+    vin = "VIN123"
+
+    store.apply(
+        IngestionEvent(
+            vin=vin,
+            section=StateSection.HVAC,
+            source=IngestionSource.HTTP,
+            observed_at=_dt(),
+            payload_timestamp=100.0,
+            data={"status": 0, "ac_switch": 0},
+        )
+    )
+
+    # Older-but-within-skew MQTT update should not be able to overwrite HTTP state.
+    store.apply(
+        IngestionEvent(
+            vin=vin,
+            section=StateSection.HVAC,
+            source=IngestionSource.MQTT,
+            observed_at=_dt(),
+            payload_timestamp=50.0,
+            data={"status": 2},
+        )
+    )
+
+    assert store.get_section(vin, StateSection.HVAC).get("status") == 0
+
+
+def test_higher_priority_source_can_win_within_skew_when_timestamps_disagree() -> None:
+    store = StateStore(skew_allowance_seconds=60.0)
+    vin = "VIN123"
+
+    store.apply(
+        IngestionEvent(
+            vin=vin,
+            section=StateSection.HVAC,
+            source=IngestionSource.MQTT,
+            observed_at=_dt(),
+            payload_timestamp=100.0,
+            data={"status": 2},
+        )
+    )
+
+    # Slightly older HTTP update (within skew) should still be accepted since HTTP > MQTT.
+    store.apply(
+        IngestionEvent(
+            vin=vin,
+            section=StateSection.HVAC,
+            source=IngestionSource.HTTP,
+            observed_at=_dt(),
+            payload_timestamp=50.0,
+            data={"status": 0, "ac_switch": 0},
+        )
+    )
+
+    section = store.get_section(vin, StateSection.HVAC)
+    assert section.get("status") == 0
+    assert section.get("ac_switch") == 0

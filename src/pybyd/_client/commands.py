@@ -129,7 +129,7 @@ async def lock(
         },
     )
     try:
-        return await _remote_control(
+        result = await _remote_control(
             client,
             vin=vin,
             command=RemoteCommand.LOCK,
@@ -137,6 +137,20 @@ async def lock(
             poll_attempts=opts.poll_attempts,
             poll_interval=opts.poll_interval,
         )
+        if result.success:
+            await client.apply_optimistic(
+                vin,
+                section=StateSection.REALTIME,
+                patch={
+                    "left_front_door_lock": optimistic_value,
+                    "right_front_door_lock": optimistic_value,
+                    "left_rear_door_lock": optimistic_value,
+                    "right_rear_door_lock": optimistic_value,
+                    "sliding_door_lock": optimistic_value,
+                },
+                ttl_seconds=0,
+            )
+        return result
     except Exception:
         await client.apply_optimistic(
             vin,
@@ -180,7 +194,7 @@ async def unlock(
         },
     )
     try:
-        return await _remote_control(
+        result = await _remote_control(
             client,
             vin=vin,
             command=RemoteCommand.UNLOCK,
@@ -188,6 +202,20 @@ async def unlock(
             poll_attempts=opts.poll_attempts,
             poll_interval=opts.poll_interval,
         )
+        if result.success:
+            await client.apply_optimistic(
+                vin,
+                section=StateSection.REALTIME,
+                patch={
+                    "left_front_door_lock": optimistic_value,
+                    "right_front_door_lock": optimistic_value,
+                    "left_rear_door_lock": optimistic_value,
+                    "right_rear_door_lock": optimistic_value,
+                    "sliding_door_lock": optimistic_value,
+                },
+                ttl_seconds=0,
+            )
+        return result
     except Exception:
         await client.apply_optimistic(
             vin,
@@ -251,7 +279,7 @@ async def start_climate(
 
     await client.apply_optimistic(vin, section=StateSection.HVAC, patch=params.optimistic_hvac_patch_on())
     try:
-        return await _remote_control(
+        result = await _remote_control(
             client,
             vin=vin,
             command=RemoteCommand.START_CLIMATE,
@@ -260,6 +288,16 @@ async def start_climate(
             poll_attempts=opts.poll_attempts,
             poll_interval=opts.poll_interval,
         )
+        if result.success:
+            # Treat successful command ack as confirmation and keep the optimistic
+            # state until a server snapshot arrives (do not rely on the default TTL).
+            await client.apply_optimistic(
+                vin,
+                section=StateSection.HVAC,
+                patch=params.optimistic_hvac_patch_on(),
+                ttl_seconds=0,
+            )
+        return result
     except Exception:
         await client.apply_optimistic(vin, section=StateSection.HVAC, patch={"status": 0, "ac_switch": 0})
         raise
@@ -282,7 +320,7 @@ async def stop_climate(
     )
     await client.apply_optimistic(vin, section=StateSection.HVAC, patch={"status": 0, "ac_switch": 0})
     try:
-        return await _remote_control(
+        result = await _remote_control(
             client,
             vin=vin,
             command=RemoteCommand.STOP_CLIMATE,
@@ -290,6 +328,14 @@ async def stop_climate(
             poll_attempts=opts.poll_attempts,
             poll_interval=opts.poll_interval,
         )
+        if result.success:
+            await client.apply_optimistic(
+                vin,
+                section=StateSection.HVAC,
+                patch={"status": 0, "ac_switch": 0},
+                ttl_seconds=0,
+            )
+        return result
     except Exception:
         await client.apply_optimistic(vin, section=StateSection.HVAC, patch={"status": 2})
         raise

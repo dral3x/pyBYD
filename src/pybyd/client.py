@@ -212,8 +212,21 @@ class BydClient:
         if coordinator is not None:
             coordinator._on_event(event)
 
-    async def apply_optimistic(self, vin: str, *, section: StateSection, patch: dict[str, Any]) -> None:
-        """Apply a temporary optimistic overlay (cleared by server updates or TTL)."""
+    async def apply_optimistic(
+        self,
+        vin: str,
+        *,
+        section: StateSection,
+        patch: dict[str, Any],
+        ttl_seconds: float | None = None,
+    ) -> None:
+        """Apply an optimistic overlay.
+
+        By default, optimistic overlays expire after the store's configured TTL.
+        When ``ttl_seconds`` is set and <= 0, the overlay becomes "sticky" and
+        will not expire on its own (but is still cleared by any non-optimistic
+        update for the same section).
+        """
         self._store.apply(
             IngestionEvent(
                 vin=vin,
@@ -221,7 +234,7 @@ class BydClient:
                 source=IngestionSource.OPTIMISTIC,
                 payload_timestamp=None,
                 data=patch,
-                raw=patch,
+                raw={"patch": patch, "__pybyd_optimistic_ttl_s": ttl_seconds},
             )
         )
 
