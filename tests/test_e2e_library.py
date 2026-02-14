@@ -183,6 +183,21 @@ class FakeBydBackend:
         if endpoint == "/control/remoteControlResult":
             return self._code_zero({"controlState": 1, "requestSerial": "CMD-1"})
 
+        if endpoint == "/control/smartCharge/changeChargeStatue":
+            return self._code_zero({"result": "ok"})
+
+        if endpoint == "/control/smartCharge/saveOrUpdate":
+            return self._code_zero({"result": "ok"})
+
+        if endpoint == "/control/vehicle/modifyAutoAlias":
+            return self._code_zero({"result": "ok"})
+
+        if endpoint == "/app/push/getPushSwitchState":
+            return self._code_zero({"pushSwitch": 1})
+
+        if endpoint == "/app/push/setPushSwitchState":
+            return self._code_zero({"result": "ok"})
+
         raise AssertionError(f"Unexpected endpoint in fake backend: {endpoint}")
 
 
@@ -230,6 +245,9 @@ def backend(monkeypatch: pytest.MonkeyPatch) -> FakeBydBackend:
         "pybyd._api.hvac",
         "pybyd._api.charging",
         "pybyd._api.control",
+        "pybyd._api.smart_charging",
+        "pybyd._api.vehicle_settings",
+        "pybyd._api.push_notifications",
         "pybyd._mqtt",
     ]
     for target in decrypt_targets:
