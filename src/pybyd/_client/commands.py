@@ -73,6 +73,14 @@ async def _remote_control(
         session = await client.ensure_session()
         transport = client._require_transport()
         coordinator = client._mqtt
+
+        async def _mqtt_waiter(request_serial: str | None) -> RemoteControlResult | None:
+            if coordinator is None:
+                return None
+            if request_serial:
+                coordinator.remember_remote_control(request_serial, vin=vin, command=command)
+            return await coordinator.wait_for_remote_control(request_serial)
+
         return await poll_remote_control(
             client._config,
             session,
@@ -83,7 +91,7 @@ async def _remote_control(
             command_pwd=resolved_pwd,
             poll_attempts=poll_attempts,
             poll_interval=poll_interval,
-            mqtt_result_waiter=coordinator.wait_for_remote_control if coordinator else None,
+            mqtt_result_waiter=_mqtt_waiter if coordinator else None,
             debug_recorder=None,
         )
 
