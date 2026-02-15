@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict
 from pybyd._api._common import build_inner_base, post_token_json
 from pybyd._crypto.aes import aes_decrypt_utf8
 from pybyd._crypto.hashing import md5_hex
+from pybyd._redact import redact_for_log
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
 from pybyd.exceptions import BydError
@@ -199,7 +200,7 @@ class BydMqttRuntime:
                 self._logger.debug(
                     "MQTT publish received topic=%s parsed=%s",
                     msg.topic,
-                    parsed,
+                    redact_for_log(parsed),
                 )
 
                 event_name = str(parsed.get("event") or "")

@@ -12,6 +12,7 @@ It is internal to pyBYD and may change at any time.
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import time
 from typing import Any
@@ -19,6 +20,7 @@ from typing import Any
 from pybyd._api._envelope import build_token_outer_envelope
 from pybyd._constants import SESSION_EXPIRED_CODES
 from pybyd._crypto.aes import aes_decrypt_utf8
+from pybyd._redact import redact_for_log
 from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.exceptions import (
@@ -27,6 +29,8 @@ from pybyd.exceptions import (
     BydSessionExpiredError,
 )
 from pybyd.session import Session
+
+_logger = logging.getLogger(__name__)
 
 #: API error codes indicating the endpoint is not supported for this vehicle.
 ENDPOINT_NOT_SUPPORTED_CODES: frozenset[str] = frozenset({"1001"})
@@ -118,13 +122,20 @@ def decode_respond_data(
     if not plaintext or not plaintext.strip():
         return {}
     try:
-        return json.loads(plaintext)
+        decoded = json.loads(plaintext)
     except json.JSONDecodeError as exc:
         raise BydApiError(
             f"{endpoint} respondData is not JSON: {plaintext[:128]}",
             code="invalid_json",
             endpoint=endpoint,
         ) from exc
+
+    _logger.debug(
+        "HTTP respondData decoded endpoint=%s parsed=%s",
+        endpoint,
+        redact_for_log(decoded),
+    )
+    return decoded
 
 
 async def post_token_json(

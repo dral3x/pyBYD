@@ -34,6 +34,7 @@ _src = _repo / "src"
 if _src.is_dir():
     sys.path.insert(0, str(_src))
 
+# pylint: disable=wrong-import-position
 from pybyd import BydClient, BydConfig  # noqa: E402
 from pybyd._tools.field_mapper import (  # noqa: E402
     EvidenceCollector,
@@ -141,7 +142,7 @@ async def capture_snapshot(
     if include_vehicles:
         name, obj, err = await _safe_call(
             "vehicles",
-            lambda: client.get_vehicles(),
+            client.get_vehicles,
         )
         snapshot["endpoints"][name] = {
             "error": err,

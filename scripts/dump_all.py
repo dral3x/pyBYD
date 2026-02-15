@@ -46,6 +46,7 @@ _src = _repo / "src"
 if _src.is_dir():
     sys.path.insert(0, str(_src))
 
+# pylint: disable=wrong-import-position
 from pybyd import BydClient, BydConfig  # noqa: E402
 
 # ── helpers ──────────────────────────────────────────────────

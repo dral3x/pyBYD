@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# pylint: disable=redefined-outer-name
+
 import asyncio
 import json
 from collections.abc import Callable

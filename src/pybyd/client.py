@@ -125,6 +125,7 @@ class BydClient:
             self._config,
             self._codec,
             self._http_session,
+            logger=_logger,
         )
         await self._codec.async_load_tables()
         return self

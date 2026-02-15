@@ -87,7 +87,7 @@ class BydEnum(enum.IntEnum):
         # noinspection PyUnresolvedReferences
         # pylint: disable=no-member
         if hasattr(cls, "UNKNOWN"):
-            unknown: BydEnum = cls.UNKNOWN  # type: ignore[attr-defined]
+            unknown: BydEnum = cls.UNKNOWN
             return unknown
         # Fallback: return first member
         return next(iter(cls))

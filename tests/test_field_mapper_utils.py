@@ -16,7 +16,7 @@ def test_diff_flatmaps_ignored() -> None:
     before = {"x": 1, "y": 2}
     after = {"x": 1, "y": 3}
     diffs = diff_flatmaps(before, after, ignored_paths={"y"})
-    assert diffs == {}
+    assert not diffs
 
 
 def test_redaction_basic() -> None:

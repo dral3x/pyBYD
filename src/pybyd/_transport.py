@@ -11,6 +11,7 @@ import aiohttp
 
 from pybyd._constants import USER_AGENT
 from pybyd._crypto.bangcle import BangcleCodec
+from pybyd._redact import redact_for_log
 from pybyd.config import BydConfig
 from pybyd.exceptions import BydTransportError
 
@@ -40,10 +41,13 @@ class SecureTransport:
         config: BydConfig,
         codec: BangcleCodec,
         http_session: aiohttp.ClientSession,
+        *,
+        logger: logging.Logger | None = None,
     ) -> None:
         self._config = config
         self._codec = codec
         self._http = http_session
+        self._logger = logger or _logger
 
     async def post_secure(self, endpoint: str, outer_payload: Mapping[str, Any]) -> dict[str, Any]:
         """Send a signed request through the Bangcle envelope layer.
@@ -65,7 +69,7 @@ class SecureTransport:
         url = f"{self._config.base_url}{endpoint}"
         body = json.dumps({"request": encoded})
 
-        _logger.debug("POST %s", url)
+        self._logger.debug("HTTP POST %s", url)
 
         try:
             async with self._http.post(url, data=body, headers=headers) as resp:
@@ -118,5 +122,13 @@ class SecureTransport:
                 f"Bangcle response from {endpoint} is not JSON: {decoded_text[:64]}",
                 endpoint=endpoint,
             ) from exc
+
+        # Match MQTT logging style: show the decoded outer response.
+        # NOTE: respondData/encryData/request/response/token/password fields are redacted.
+        self._logger.debug(
+            "HTTP response received endpoint=%s parsed=%s",
+            endpoint,
+            redact_for_log(result),
+        )
 
         return result

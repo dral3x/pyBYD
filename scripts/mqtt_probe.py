@@ -50,6 +50,7 @@ def _maybe_reexec_with_project_venv() -> None:
 
 _maybe_reexec_with_project_venv()
 
+# pylint: disable=wrong-import-position
 from pybyd import BydClient, BydConfig  # noqa: E402
 from pybyd._mqtt import decode_mqtt_payload, fetch_mqtt_bootstrap  # noqa: E402
 

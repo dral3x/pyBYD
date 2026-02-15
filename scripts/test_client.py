@@ -54,6 +54,7 @@ def _maybe_reexec_with_project_venv() -> None:
 
 _maybe_reexec_with_project_venv()
 
+# pylint: disable=wrong-import-position
 from pybyd import BydApiError, BydClient, BydConfig  # noqa: E402
 from pybyd._crypto.aes import aes_decrypt_utf8  # noqa: E402
 from pybyd._crypto.hashing import pwd_login_key  # noqa: E402
