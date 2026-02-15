@@ -24,6 +24,7 @@ import asyncio
 import json
 import os
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,52 @@ _maybe_reexec_with_project_venv()
 from pybyd import BydApiError, BydClient, BydConfig  # noqa: E402
 from pybyd._crypto.aes import aes_decrypt_utf8  # noqa: E402
 from pybyd._crypto.hashing import pwd_login_key  # noqa: E402
+
+
+def _install_transport_trace(client: BydClient, traces: list[dict[str, Any]]) -> None:
+    """Install a best-effort transport trace recorder onto an initialized client.
+
+    The library no longer exposes a first-class trace callback; for script
+    parity checks we wrap the underlying transport's `post_secure`.
+    """
+
+    transport = getattr(client, "_transport", None)
+    if transport is None:
+        raise RuntimeError("Client transport not initialized; use within 'async with BydClient(...)'")
+
+    original_post_secure = transport.post_secure
+    codec = getattr(transport, "_codec", None)
+
+    async def traced_post_secure(endpoint: str, outer_payload: Mapping[str, Any]) -> dict[str, Any]:
+        outer_dict = dict(outer_payload)
+        encoded: str | None = None
+        if codec is not None:
+            try:
+                encoded = codec.encode_envelope(json.dumps(outer_dict, separators=(",", ":")))
+            except Exception:
+                encoded = None
+
+        trace: dict[str, Any] = {
+            "endpoint": endpoint,
+            "request": {
+                "outer": outer_dict,
+                "encoded": encoded,
+            },
+            "http": {
+                "url": f"{client._config.base_url}{endpoint}",
+            },
+        }
+        try:
+            decoded = await original_post_secure(endpoint, outer_payload)
+            trace["response"] = {"decoded": decoded}
+            return decoded
+        except Exception as exc:
+            trace["error"] = {"type": type(exc).__name__, "message": str(exc)}
+            raise
+        finally:
+            traces.append(trace)
+
+    transport.post_secure = traced_post_secure
 
 COMMON_OUTER_KEYS: tuple[str, ...] = (
     "countryCode",
@@ -529,10 +576,8 @@ async def _run(args: argparse.Namespace) -> int:
     control_pin = _load_shared_control_pin()
     traces: list[dict[str, Any]] = []
 
-    def trace_recorder(payload: dict[str, Any]) -> None:
-        traces.append(payload)
-
-    async with BydClient(config, response_trace_recorder=trace_recorder) as client:
+    async with BydClient(config) as client:
+        _install_transport_trace(client, traces)
         vehicles = await client.get_vehicles()
         if not vehicles:
             print("No vehicles returned by account")
@@ -570,7 +615,7 @@ async def _run(args: argparse.Namespace) -> int:
 
         results = _collect_common_trace_results(traces)
         results.extend(verify_call_results)
-        results.extend(_compare_verify_trace(verify_trace, session.content_key))
+        results.extend(_compare_verify_trace(verify_trace, session.content_key()))
 
     if args.json_trace:
         print(json.dumps(traces, indent=2, ensure_ascii=False, sort_keys=True))
@@ -578,7 +623,7 @@ async def _run(args: argparse.Namespace) -> int:
     if args.layers:
         layer_dump = _build_layered_trace_dump(
             traces,
-            session_content_key=session.content_key,
+            session_content_key=session.content_key(),
             login_key=pwd_login_key(config.password),
         )
         print("\nLayered request/response dump")

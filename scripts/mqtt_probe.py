@@ -51,7 +51,7 @@ def _maybe_reexec_with_project_venv() -> None:
 _maybe_reexec_with_project_venv()
 
 from pybyd import BydClient, BydConfig  # noqa: E402
-from pybyd._mqtt import decode_mqtt_payload  # noqa: E402
+from pybyd._mqtt import decode_mqtt_payload, fetch_mqtt_bootstrap  # noqa: E402
 
 try:
     import paho.mqtt.client as mqtt
@@ -144,7 +144,12 @@ async def _bootstrap(config: BydConfig) -> ProbeBootstrap:
     async with BydClient(config) as client:
         await client.login()
         session = await client.ensure_session()
-        mqtt_bootstrap = await client.get_mqtt_bootstrap()
+
+        # `BydClient.get_mqtt_bootstrap()` used to exist; bootstrap is now an internal helper.
+        transport = getattr(client, "_transport", None)
+        if transport is None:
+            raise RuntimeError("Client transport not initialized")
+        mqtt_bootstrap = await fetch_mqtt_bootstrap(config, session, transport)
 
         return ProbeBootstrap(
             user_id=mqtt_bootstrap.user_id,
@@ -154,7 +159,7 @@ async def _bootstrap(config: BydConfig) -> ProbeBootstrap:
             client_id=mqtt_bootstrap.client_id,
             username=mqtt_bootstrap.username,
             password=mqtt_bootstrap.password,
-            decrypt_key_hex=session.content_key,
+            decrypt_key_hex=session.content_key(),
         )
 
 
