@@ -46,17 +46,6 @@ class MqttEvent(BaseModel):
     payload: dict[str, Any]
 
 
-class MqttPayloadLayers(BaseModel):
-    """MQTT payload representation across encryption/decode layers."""
-
-    model_config = ConfigDict(frozen=True)
-
-    raw_bytes: bytes
-    raw_ascii: str
-    plaintext: str
-    parsed: dict[str, Any]
-
-
 def _parse_broker(raw_broker: str) -> tuple[str, int]:
     value = raw_broker.strip()
     if not value:
@@ -130,24 +119,14 @@ async def fetch_mqtt_bootstrap(
     )
 
 
-def decode_mqtt_payload_layers(payload: bytes, decrypt_key_hex: str) -> MqttPayloadLayers:
-    """Decode MQTT payload into raw, plaintext, and parsed layers."""
+def decode_mqtt_payload(payload: bytes, decrypt_key_hex: str) -> dict[str, Any]:
+    """Decrypt and parse MQTT payload bytes into a JSON object."""
     raw_text = payload.decode("ascii", errors="replace").strip()
     plain = aes_decrypt_utf8(raw_text, decrypt_key_hex)
     parsed = json.loads(plain)
     if not isinstance(parsed, dict):
         raise BydError("MQTT payload decrypted to non-object JSON")
-    return MqttPayloadLayers(
-        raw_bytes=payload,
-        raw_ascii=raw_text,
-        plaintext=plain,
-        parsed=parsed,
-    )
-
-
-def decode_mqtt_payload(payload: bytes, decrypt_key_hex: str) -> dict[str, Any]:
-    """Decrypt and parse MQTT payload bytes into a JSON object."""
-    return decode_mqtt_payload_layers(payload, decrypt_key_hex).parsed
+    return parsed
 
 
 class BydMqttRuntime:
@@ -215,22 +194,22 @@ class BydMqttRuntime:
 
         def on_message(_c: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
             try:
-                layers = decode_mqtt_payload_layers(msg.payload, self._decrypt_key_hex)
+                parsed = decode_mqtt_payload(msg.payload, self._decrypt_key_hex)
                 self._logger.debug(
                     "MQTT publish received topic=%s parsed=%s",
                     msg.topic,
-                    layers.parsed,
+                    parsed,
                 )
 
-                event_name = str(layers.parsed.get("event") or "")
-                vin_value = layers.parsed.get("vin")
+                event_name = str(parsed.get("event") or "")
+                vin_value = parsed.get("vin")
                 vin = vin_value if isinstance(vin_value, str) and vin_value else None
                 self._logger.debug("MQTT payload decoded event=%s vin=%s", event_name, vin)
                 event = MqttEvent(
                     event=event_name,
                     vin=vin,
                     topic=msg.topic,
-                    payload=layers.parsed,
+                    payload=parsed,
                 )
                 self._loop.call_soon_threadsafe(self._on_event, event)
             except Exception:

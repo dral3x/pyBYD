@@ -14,7 +14,7 @@ import logging
 from typing import Any
 
 from pybyd._api._common import build_inner_base, post_token_json
-from pybyd._transport import SecureTransport
+from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.exceptions import BydApiError, BydSessionExpiredError
 from pybyd.models.gps import GpsInfo
@@ -40,7 +40,7 @@ async def _fetch_gps_endpoint(
     endpoint: str,
     config: BydConfig,
     session: Session,
-    transport: SecureTransport,
+    transport: Transport,
     vin: str,
     request_serial: str | None = None,
 ) -> tuple[dict[str, Any], str | None]:
@@ -63,7 +63,7 @@ async def _fetch_gps_endpoint(
 async def poll_gps_info(
     config: BydConfig,
     session: Session,
-    transport: SecureTransport,
+    transport: Transport,
     vin: str,
     *,
     poll_attempts: int = 10,
@@ -77,7 +77,7 @@ async def poll_gps_info(
         Client configuration.
     session : Session
         Authenticated session.
-    transport : SecureTransport
+    transport : Transport
         HTTP transport.
     vin : str
         Vehicle Identification Number.

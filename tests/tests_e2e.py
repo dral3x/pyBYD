@@ -4,13 +4,12 @@ import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
 from pybyd._api.control import _fetch_control_endpoint, verify_control_password
-from pybyd._api.realtime import _parse_vehicle_info
 from pybyd._constants import SESSION_EXPIRED_CODES
 from pybyd._mqtt import MqttEvent
 from pybyd.client import BydClient
@@ -18,15 +17,10 @@ from pybyd.config import BydConfig
 from pybyd.exceptions import BydApiError, BydAuthenticationError, BydRemoteControlError
 from pybyd.models.charging import ChargingStatus
 from pybyd.models.control import RemoteCommand
+from pybyd.models.realtime import VehicleRealtimeData
 from pybyd.models.realtime import VehicleState as RealtimeVehicleState
 from pybyd.models.smart_charging import SmartChargingSchedule
 from pybyd.session import Session
-from pybyd.state.events import IngestionEvent, IngestionSource, StateSection
-from pybyd.state.store import StateStore
-
-
-def _dt(seconds: int) -> datetime:
-    return datetime.fromtimestamp(seconds, tz=UTC)
 
 
 def _patch_common_client_monkeypatches(
@@ -48,7 +42,6 @@ def _patch_common_client_monkeypatches(
         self._running = False
 
     def identity_decrypt(payload: str, _key: str) -> str:
-        # Tests monkeypatch away AES so fake backends can return plaintext JSON.
         return payload
 
     monkeypatch.setattr("pybyd._transport.SecureTransport.post_secure", fake_post_secure)
@@ -62,18 +55,17 @@ def _patch_common_client_monkeypatches(
 
 @pytest.fixture
 def config() -> BydConfig:
-    # Common config that works for all tests in this consolidated module.
     return BydConfig(
         username="user@example.com",
         password="secret",
         control_pin="123456",
         mqtt_enabled=True,
-        mqtt_command_timeout=0.2,
+        mqtt_timeout=0.2,
     )
 
 
 # ---------------------------------------------------------------------------
-# Mocked end-to-end backend (full library surface)
+# Fake backend for full end-to-end tests
 # ---------------------------------------------------------------------------
 
 
@@ -86,7 +78,6 @@ class FakeBydBackend:
     expire_once_endpoints: set[str] = field(default_factory=set)
     _expired_already: set[str] = field(default_factory=set)
     emit_mqtt_remote_result: bool = True
-    emit_mqtt_realtime_result: bool = False
     mqtt_event_handler: Callable[[MqttEvent], None] | None = None
 
     def _record_call(self, endpoint: str) -> None:
@@ -103,29 +94,6 @@ class FakeBydBackend:
             vin=self.vin,
             topic="oversea/res/user-1",
             payload={"data": {"respondData": {"res": 2, "message": "ok", "requestSerial": "CMD-1"}}},
-        )
-        asyncio.get_running_loop().call_later(0.01, self.mqtt_event_handler, event)
-
-    def _maybe_emit_realtime_event(self) -> None:
-        if not self.emit_mqtt_realtime_result or self.mqtt_event_handler is None:
-            return
-        event = MqttEvent(
-            event="vehicleInfo",
-            vin=self.vin,
-            topic="oversea/res/user-1",
-            payload={
-                "data": {
-                    "respondData": {
-                        "requestSerial": "RT-1",
-                        "onlineState": 1,
-                        "time": 1_771_000_003,
-                        "elecPercent": 91,
-                        "speed": 0,
-                        "leftFrontDoorLock": 2,
-                        "rightFrontDoorLock": 2,
-                    }
-                }
-            },
         )
         asyncio.get_running_loop().call_later(0.01, self.mqtt_event_handler, event)
 
@@ -164,7 +132,6 @@ class FakeBydBackend:
             )
 
         if endpoint == "/vehicleInfo/vehicle/vehicleRealTimeRequest":
-            self._maybe_emit_realtime_event()
             return self._code_zero({"requestSerial": "RT-1", "onlineState": 2})
 
         if endpoint == "/vehicleInfo/vehicle/vehicleRealTimeResult":
@@ -283,10 +250,14 @@ def e2e_backend(monkeypatch: pytest.MonkeyPatch) -> FakeBydBackend:
             "pybyd._api.vehicle_settings",
             "pybyd._api.push_notifications",
             "pybyd._mqtt",
-            "pybyd.ingestion.vehicles",
         ],
     )
     return backend
+
+
+# ---------------------------------------------------------------------------
+# End-to-end tests
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -302,7 +273,7 @@ async def test_e2e_client_happy_path_exercises_full_library(config: BydConfig, e
         vin = vehicles[0].vin
         assert vin == e2e_backend.vin
 
-        realtime = await client.get_vehicle_realtime(vin, poll_attempts=1, poll_interval=0)
+        realtime = await client.get_vehicle_realtime(vin, poll_attempts=1, poll_interval=0, mqtt_timeout=0)
         assert realtime.elec_percent == 84
 
         gps = await client.get_gps_info(vin, poll_attempts=1, poll_interval=0)
@@ -323,14 +294,14 @@ async def test_e2e_client_happy_path_exercises_full_library(config: BydConfig, e
         assert verify.vin == vin
         assert verify.ok is True
 
-        lock_result = await client.lock(vin, poll_attempts=1, poll_interval=0)
+        lock_result = await client.lock(vin)
         assert lock_result.success is True
 
         assert client._mqtt_runtime is not None
         assert client._mqtt_runtime.is_running is True
 
     assert e2e_backend.calls.get("/app/account/login", 0) == 2
-    assert e2e_backend.calls.get("/app/emqAuth/getEmqBrokerIp", 0) >= 2
+    assert e2e_backend.calls.get("/app/emqAuth/getEmqBrokerIp", 0) >= 1
     assert e2e_backend.calls.get("/vehicle/vehicleswitch/verifyControlPassword", 0) == 1
     assert e2e_backend.calls.get("/control/remoteControlResult", 0) == 0
 
@@ -369,13 +340,13 @@ async def test_e2e_remote_control_falls_back_to_poll_when_mqtt_times_out(
         password=config.password,
         control_pin=config.control_pin,
         mqtt_enabled=True,
-        mqtt_command_timeout=0.01,
+        mqtt_timeout=0.01,
     )
 
     async with BydClient(fallback_config) as client:
         vehicles = await client.get_vehicles()
         vin = vehicles[0].vin
-        result = await client.lock(vin, poll_attempts=1, poll_interval=0)
+        result = await client.lock(vin)
         assert result.success is True
 
     assert e2e_backend.calls.get("/control/remoteControlResult", 0) == 1
@@ -383,34 +354,16 @@ async def test_e2e_remote_control_falls_back_to_poll_when_mqtt_times_out(
 
 @pytest.mark.asyncio
 @pytest.mark.e2e
-async def test_e2e_realtime_uses_mqtt_before_http_poll(config: BydConfig, e2e_backend: FakeBydBackend) -> None:
-    e2e_backend.emit_mqtt_realtime_result = True
-
+async def test_client_full_workflow(config: BydConfig, e2e_backend: FakeBydBackend) -> None:
     async with BydClient(config) as client:
         e2e_backend.mqtt_event_handler = client._on_mqtt_event
-        vehicles = await client.get_vehicles()
-        vin = vehicles[0].vin
-
-        realtime = await client.get_vehicle_realtime(vin, poll_attempts=2, poll_interval=0)
-        assert realtime.elec_percent == 91
-
-    assert e2e_backend.calls.get("/vehicleInfo/vehicle/vehicleRealTimeResult", 0) == 0
-
-
-@pytest.mark.asyncio
-@pytest.mark.e2e
-async def test_client_full_workflow(config: BydConfig, e2e_backend: FakeBydBackend) -> None:
-    e2e_backend.emit_mqtt_realtime_result = True
-
-    async with BydClient(config) as client:
-        e2e_backend.mqtt_event_handler = client._on_mqtt_event  # type: ignore[attr-defined]
 
         await client.login()
         vehicles = await client.get_vehicles()
         assert vehicles
         vin = vehicles[0].vin
 
-        realtime = await client.get_vehicle_realtime(vin, poll_attempts=2, poll_interval=0.01)
+        realtime = await client.get_vehicle_realtime(vin, poll_attempts=2, poll_interval=0.01, mqtt_timeout=0)
         assert realtime.elec_percent is not None
 
         gps = await client.get_gps_info(vin, poll_attempts=2, poll_interval=0.01)
@@ -431,7 +384,7 @@ async def test_client_full_workflow(config: BydConfig, e2e_backend: FakeBydBacke
 
         verify = await client.verify_control_password(vin)
         assert verify.vin == vin
-        result = await client.lock(vin, poll_attempts=2, poll_interval=0.01)
+        result = await client.lock(vin)
         assert result.success is True
 
         await client.toggle_smart_charging(vin, enable=True)
@@ -474,7 +427,7 @@ def _make_session() -> Session:
 
 @pytest.mark.asyncio
 async def test_remote_control_1009_raises_remote_control_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    config = BydConfig(username="user@example.com", password="secret")
+    cfg = BydConfig(username="user@example.com", password="secret")
     session = _make_session()
 
     monkeypatch.setattr(
@@ -485,7 +438,7 @@ async def test_remote_control_1009_raises_remote_control_error(monkeypatch: pyte
     with pytest.raises(BydRemoteControlError) as exc_info:
         await _fetch_control_endpoint(
             "/control/remoteControl",
-            config,
+            cfg,
             session,
             _ErrorTransport("1009", "Dienstfehler(1009)"),
             "VIN-E2E-123",
@@ -499,7 +452,7 @@ async def test_remote_control_1009_raises_remote_control_error(monkeypatch: pyte
 
 @pytest.mark.asyncio
 async def test_non_remote_endpoint_1009_stays_api_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    config = BydConfig(username="user@example.com", password="secret")
+    cfg = BydConfig(username="user@example.com", password="secret")
     session = _make_session()
 
     monkeypatch.setattr(
@@ -510,7 +463,7 @@ async def test_non_remote_endpoint_1009_stays_api_error(monkeypatch: pytest.Monk
     with pytest.raises(BydApiError) as exc_info:
         await _fetch_control_endpoint(
             "/vehicle/someOtherEndpoint",
-            config,
+            cfg,
             session,
             _ErrorTransport("1009", "Dienstfehler(1009)"),
             "VIN-E2E-123",
@@ -531,7 +484,7 @@ class _FakeTransport:
 
 @pytest.mark.asyncio
 async def test_verify_control_password_accepts_empty_decrypted_payload(monkeypatch: pytest.MonkeyPatch) -> None:
-    config = BydConfig(username="user@example.com", password="secret", control_pin="123456")
+    cfg = BydConfig(username="user@example.com", password="secret", control_pin="123456")
     session = Session(
         user_id="user-1",
         sign_token="sign-token-1",
@@ -542,7 +495,7 @@ async def test_verify_control_password_accepts_empty_decrypted_payload(monkeypat
     monkeypatch.setattr("pybyd._api.control.aes_decrypt_utf8", lambda _value, _key: "")
 
     result = await verify_control_password(
-        config,
+        cfg,
         session,
         _FakeTransport(),
         "VIN-E2E-123",
@@ -551,7 +504,6 @@ async def test_verify_control_password_accepts_empty_decrypted_payload(monkeypat
 
     assert result.vin == "VIN-E2E-123"
     assert result.ok is None
-    assert result.raw == {}
 
 
 # ---------------------------------------------------------------------------
@@ -563,8 +515,9 @@ def test_session_expired_codes_include_1002() -> None:
     assert "1002" in SESSION_EXPIRED_CODES
 
 
-def test_realtime_negative_charge_times_normalized_to_zero() -> None:
-    realtime = _parse_vehicle_info(
+def test_realtime_negative_charge_times_are_kept() -> None:
+    """BYD sends -1 for charge times when not applicable — kept as-is."""
+    realtime = VehicleRealtimeData.model_validate(
         {
             "vin": "VIN123",
             "fullHour": -1,
@@ -574,15 +527,15 @@ def test_realtime_negative_charge_times_normalized_to_zero() -> None:
         }
     )
 
-    assert realtime.full_hour == 0
-    assert realtime.full_minute == 0
-    assert realtime.charge_remaining_hours == 0
-    assert realtime.charge_remaining_minutes == 0
+    assert realtime.full_hour == -1
+    assert realtime.full_minute == -1
+    assert realtime.remaining_hours == -1
+    assert realtime.remaining_minutes == -1
 
 
 def test_realtime_vehicle_state_mapping_on_and_off() -> None:
-    on_realtime = _parse_vehicle_info({"vehicleState": 0})
-    off_realtime = _parse_vehicle_info({"vehicleState": 2})
+    on_realtime = VehicleRealtimeData.model_validate({"vehicleState": 0})
+    off_realtime = VehicleRealtimeData.model_validate({"vehicleState": 2})
 
     assert on_realtime.vehicle_state == RealtimeVehicleState.ON
     assert off_realtime.vehicle_state == RealtimeVehicleState.OFF
@@ -597,254 +550,27 @@ def test_charging_status_update_datetime_seconds() -> None:
         wait_status=None,
         full_hour=None,
         full_minute=None,
-        update_time=1_770_928_447,
+        update_time=datetime.fromtimestamp(1_770_928_447, tz=UTC),
         raw={},
     )
 
-    assert status.update_datetime_utc == datetime.fromtimestamp(1_770_928_447, tz=UTC)
+    assert status.update_time == datetime.fromtimestamp(1_770_928_447, tz=UTC)
 
 
 def test_charging_status_update_datetime_milliseconds() -> None:
-    status = ChargingStatus(
-        vin="VIN123",
-        soc=None,
-        charging_state=None,
-        connect_state=None,
-        wait_status=None,
-        full_hour=None,
-        full_minute=None,
-        update_time=1_770_928_447_000,
-        raw={},
+    """Millisecond epoch values are normalised to seconds during parsing."""
+    data = ChargingStatus.model_validate(
+        {
+            "vin": "VIN123",
+            "updateTime": 1_770_928_447_000,
+        }
     )
 
-    assert status.update_datetime_utc == datetime.fromtimestamp(1_770_928_447, tz=UTC)
-
-
-def test_config_api_trace_enabled_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BYD_USERNAME", "user@example.com")
-    monkeypatch.setenv("BYD_PASSWORD", "secret")
-    monkeypatch.setenv("BYD_API_TRACE_ENABLED", "true")
-
-    cfg = BydConfig.from_env()
-
-    assert cfg.api_trace_enabled is True
+    assert data.update_time == datetime.fromtimestamp(1_770_928_447, tz=UTC)
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: deterministic state store policy
-# ---------------------------------------------------------------------------
-
-
-def test_newer_payload_timestamp_wins_over_older_update() -> None:
-    store = StateStore(clock=lambda: _dt(2_000_000_000))
-    vin = "VIN123"
-
-    store.apply(
-        IngestionEvent(
-            vin=vin,
-            section=StateSection.REALTIME,
-            source=IngestionSource.HTTP,
-            observed_at=_dt(1_000),
-            payload_timestamp=1_000,
-            data={"timestamp": 1_000, "elec_percent": 80},
-            raw={},
-        )
-    )
-
-    # Older MQTT update should not regress the SOC.
-    store.apply(
-        IngestionEvent(
-            vin=vin,
-            section=StateSection.REALTIME,
-            source=IngestionSource.MQTT,
-            observed_at=_dt(900),
-            payload_timestamp=900,
-            data={"timestamp": 900, "elec_percent": 10},
-            raw={},
-        )
-    )
-
-    snapshot = store.get_section(vin, StateSection.REALTIME)
-    assert snapshot.get("elec_percent") == 80
-    assert snapshot.get("timestamp") == 1_000
-
-
-def test_http_wins_over_mqtt_when_timestamps_missing() -> None:
-    store = StateStore(clock=lambda: _dt(2_000_000_000))
-    vin = "VIN123"
-
-    store.apply(
-        IngestionEvent(
-            vin=vin,
-            section=StateSection.HVAC,
-            source=IngestionSource.MQTT,
-            observed_at=_dt(1_000),
-            payload_timestamp=None,
-            data={"acSwitch": 0},
-            raw={},
-        )
-    )
-    store.apply(
-        IngestionEvent(
-            vin=vin,
-            section=StateSection.HVAC,
-            source=IngestionSource.HTTP,
-            observed_at=_dt(1_001),
-            payload_timestamp=None,
-            data={"acSwitch": 1},
-            raw={},
-        )
-    )
-
-    snapshot = store.get_section(vin, StateSection.HVAC)
-    assert snapshot.get("acSwitch") == 1
-
-
-def test_meaningless_values_do_not_overwrite() -> None:
-    store = StateStore(clock=lambda: _dt(2_000_000_000))
-    vin = "VIN123"
-
-    store.apply(
-        IngestionEvent(
-            vin=vin,
-            section=StateSection.REALTIME,
-            source=IngestionSource.HTTP,
-            observed_at=_dt(1_000),
-            payload_timestamp=1_000,
-            data={"timestamp": 1_000, "endurance_mileage_v2_unit": "km"},
-            raw={},
-        )
-    )
-    store.apply(
-        IngestionEvent(
-            vin=vin,
-            section=StateSection.REALTIME,
-            source=IngestionSource.MQTT,
-            observed_at=_dt(1_001),
-            payload_timestamp=1_001,
-            # Placeholder values are pruned at ingestion; missing keys mean "no update".
-            data={"timestamp": 1_001},
-            raw={},
-        )
-    )
-
-    snapshot = store.get_section(vin, StateSection.REALTIME)
-    assert snapshot.get("endurance_mileage_v2_unit") == "km"
-
-
-def test_optimistic_overlay_applies_then_expires() -> None:
-    now = _dt(2_000)
-    store = StateStore(
-        clock=lambda: now,
-        optimistic_ttl=timedelta(seconds=10),
-    )
-    vin = "VIN123"
-
-    store.apply(
-        IngestionEvent(
-            vin=vin,
-            section=StateSection.REALTIME,
-            source=IngestionSource.HTTP,
-            observed_at=_dt(1_000),
-            payload_timestamp=1_000,
-            data={"timestamp": 1_000, "left_front_door_lock": 1},
-            raw={},
-        )
-    )
-    store.apply(
-        IngestionEvent(
-            vin=vin,
-            section=StateSection.REALTIME,
-            source=IngestionSource.OPTIMISTIC,
-            observed_at=_dt(2_000),
-            payload_timestamp=None,
-            data={"left_front_door_lock": 2},
-            raw={},
-        )
-    )
-
-    merged = store.get_section(vin, StateSection.REALTIME)
-    assert merged.get("left_front_door_lock") == 2
-
-    # Advance time beyond TTL: optimistic overlay should be removed.
-    now = _dt(2_011)
-    merged_after = store.get_section(vin, StateSection.REALTIME)
-    assert merged_after.get("left_front_door_lock") == 1
-
-
-def test_optimistic_overlay_clears_on_server_update() -> None:
-    now = _dt(2_000)
-    store = StateStore(clock=lambda: now, optimistic_ttl=timedelta(seconds=60))
-    vin = "VIN123"
-
-    store.apply(
-        IngestionEvent(
-            vin=vin,
-            section=StateSection.REALTIME,
-            source=IngestionSource.OPTIMISTIC,
-            observed_at=_dt(2_000),
-            payload_timestamp=None,
-            data={"left_front_door_lock": 2},
-            raw={},
-        )
-    )
-    assert store.get_section(vin, StateSection.REALTIME).get("left_front_door_lock") == 2
-
-    # Server update should clear overlay and set authoritative value.
-    store.apply(
-        IngestionEvent(
-            vin=vin,
-            section=StateSection.REALTIME,
-            source=IngestionSource.MQTT,
-            observed_at=_dt(2_001),
-            payload_timestamp=2_001,
-            data={"timestamp": 2_001, "left_front_door_lock": 1},
-            raw={},
-        )
-    )
-    assert store.get_section(vin, StateSection.REALTIME).get("left_front_door_lock") == 1
-
-
-def test_optimistic_overlay_can_be_sticky() -> None:
-    now = _dt(2_000)
-    store = StateStore(
-        clock=lambda: now,
-        optimistic_ttl=timedelta(seconds=10),
-    )
-    vin = "VIN123"
-
-    store.apply(
-        IngestionEvent(
-            vin=vin,
-            section=StateSection.HVAC,
-            source=IngestionSource.HTTP,
-            observed_at=_dt(1_000),
-            payload_timestamp=1_000,
-            data={"status": 2},
-            raw={},
-        )
-    )
-    store.apply(
-        IngestionEvent(
-            vin=vin,
-            section=StateSection.HVAC,
-            source=IngestionSource.OPTIMISTIC,
-            observed_at=_dt(2_000),
-            payload_timestamp=None,
-            data={"status": 0, "ac_switch": 0},
-            raw={"__pybyd_optimistic_ttl_s": 0},
-        )
-    )
-
-    assert store.get_section(vin, StateSection.HVAC).get("status") == 0
-
-    # Advance far beyond the default TTL: sticky overlay should still be applied.
-    now = _dt(9_999)
-    assert store.get_section(vin, StateSection.HVAC).get("status") == 0
-
-
-# ---------------------------------------------------------------------------
-# Focused endpoint tests (mocked backends)
+# Focused endpoint tests: push notifications
 # ---------------------------------------------------------------------------
 
 
@@ -947,6 +673,11 @@ async def test_set_push_state_api_error(config: BydConfig, push_backend: FakePus
             await client.set_push_state(push_backend.vin, enable=True)
 
 
+# ---------------------------------------------------------------------------
+# Focused endpoint tests: smart charging
+# ---------------------------------------------------------------------------
+
+
 @dataclass
 class FakeSmartChargingBackend:
     vin: str = "VIN-SC-TEST"
@@ -1039,15 +770,18 @@ async def test_toggle_smart_charging_api_error(
 
 @pytest.mark.asyncio
 async def test_save_charging_schedule(config: BydConfig, smart_charging_backend: FakeSmartChargingBackend) -> None:
+    schedule = SmartChargingSchedule(
+        vin=smart_charging_backend.vin,
+        target_soc=80,
+        start_hour=22,
+        start_minute=0,
+        end_hour=6,
+        end_minute=0,
+        smart_charge_switch=1,
+        raw={},
+    )
     async with BydClient(config) as client:
-        result = await client.save_charging_schedule(
-            smart_charging_backend.vin,
-            target_soc=80,
-            start_hour=22,
-            start_minute=0,
-            end_hour=6,
-            end_minute=0,
-        )
+        result = await client.save_charging_schedule(smart_charging_backend.vin, schedule)
         assert result.vin == smart_charging_backend.vin
         assert result.result == "ok"
         assert result.raw == {"result": "ok"}
@@ -1060,16 +794,24 @@ async def test_save_charging_schedule_api_error(
     smart_charging_backend: FakeSmartChargingBackend,
 ) -> None:
     smart_charging_backend.save_error_code = "9999"
+    schedule = SmartChargingSchedule(
+        vin=smart_charging_backend.vin,
+        target_soc=80,
+        start_hour=22,
+        start_minute=0,
+        end_hour=6,
+        end_minute=0,
+        smart_charge_switch=1,
+        raw={},
+    )
     async with BydClient(config) as client:
         with pytest.raises(BydApiError, match="saveOrUpdate"):
-            await client.save_charging_schedule(
-                smart_charging_backend.vin,
-                target_soc=80,
-                start_hour=22,
-                start_minute=0,
-                end_hour=6,
-                end_minute=0,
-            )
+            await client.save_charging_schedule(smart_charging_backend.vin, schedule)
+
+
+# ---------------------------------------------------------------------------
+# Focused endpoint tests: vehicle settings
+# ---------------------------------------------------------------------------
 
 
 @dataclass

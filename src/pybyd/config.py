@@ -88,10 +88,10 @@ class BydConfig(BaseModel):
         Enable MQTT background listener for realtime state enrichment.
     mqtt_keepalive : int
         MQTT keepalive in seconds.
-    mqtt_command_timeout : float
-        Seconds to wait for MQTT command result before HTTP polling fallback.
-    api_trace_enabled : bool
-        Enable transport-level request/response tracing callback.
+    mqtt_timeout : float
+        Seconds to wait for an MQTT reply before falling back to HTTP
+        polling.  Applies to all trigger-then-poll endpoints (realtime,
+        GPS, remote commands).
     device : DeviceProfile
         Device identity fields.
     """
@@ -118,8 +118,7 @@ class BydConfig(BaseModel):
     session_ttl: float = 12 * 3600
     mqtt_enabled: bool = True
     mqtt_keepalive: int = 120
-    mqtt_command_timeout: float = 8.0
-    api_trace_enabled: bool = False
+    mqtt_timeout: float = 10.0
     device: DeviceProfile = Field(default_factory=DeviceProfile)
 
     @classmethod
@@ -203,15 +202,9 @@ class BydConfig(BaseModel):
         if keepalive_env is not None and "mqtt_keepalive" not in overrides:
             config_kwargs["mqtt_keepalive"] = int(keepalive_env)
 
-        timeout_env = env.get("BYD_MQTT_COMMAND_TIMEOUT")
-        if timeout_env is not None and "mqtt_command_timeout" not in overrides:
-            config_kwargs["mqtt_command_timeout"] = float(timeout_env)
-
-        if "api_trace_enabled" not in overrides:
-            config_kwargs["api_trace_enabled"] = _env_bool(
-                env.get("BYD_API_TRACE_ENABLED"),
-                False,
-            )
+        timeout_env = env.get("BYD_MQTT_TIMEOUT") or env.get("BYD_MQTT_COMMAND_TIMEOUT")
+        if timeout_env is not None and "mqtt_timeout" not in overrides:
+            config_kwargs["mqtt_timeout"] = float(timeout_env)
 
         config_kwargs.update(overrides)
 

@@ -3,11 +3,6 @@
 Endpoints:
   - /vehicleInfo/vehicle/vehicleRealTimeRequest (trigger)
   - /vehicleInfo/vehicle/vehicleRealTimeResult (poll)
-
-Note:
-This module keeps HTTP request/response envelope logic.
-All payload parsing/normalization lives on the realtime Pydantic model
-(:class:`pybyd.models.realtime.VehicleRealtimeData`).
 """
 
 from __future__ import annotations
@@ -18,9 +13,8 @@ import time
 from typing import Any
 
 from pybyd._api._common import post_token_json
-from pybyd._transport import SecureTransport
+from pybyd._transport import Transport
 from pybyd.config import BydConfig
-from pybyd.models.realtime import VehicleRealtimeData
 from pybyd.session import Session
 
 _logger = logging.getLogger(__name__)
@@ -49,28 +43,15 @@ def _build_realtime_inner(
     return inner
 
 
-def _is_realtime_data_ready(vehicle_info: dict[str, Any]) -> bool:
-    """Backwards-compatible wrapper for ingestion readiness logic."""
-
-    return VehicleRealtimeData.is_ready_raw(vehicle_info)
-
-
-def _parse_vehicle_info(data: dict[str, Any]) -> VehicleRealtimeData:
-    """Backwards-compatible wrapper for ingestion parsing."""
-
-    return VehicleRealtimeData.from_api(data)
-
-
 async def _fetch_realtime_endpoint(
     endpoint: str,
     config: BydConfig,
     session: Session,
-    transport: SecureTransport,
+    transport: Transport,
     vin: str,
     request_serial: str | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     """Fetch a single realtime endpoint, returning (vehicle_info_dict, next_serial)."""
-
     now_ms = int(time.time() * 1000)
     inner = _build_realtime_inner(config, vin, now_ms, request_serial)
 

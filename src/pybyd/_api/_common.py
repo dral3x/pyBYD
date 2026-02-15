@@ -19,13 +19,14 @@ from typing import Any
 from pybyd._api._envelope import build_token_outer_envelope
 from pybyd._constants import SESSION_EXPIRED_CODES
 from pybyd._crypto.aes import aes_decrypt_utf8
-from pybyd._transport import SecureTransport
+from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.exceptions import (
     BydApiError,
     BydEndpointNotSupportedError,
     BydSessionExpiredError,
 )
+from pybyd.models.vehicle import Vehicle
 from pybyd.session import Session
 
 
@@ -109,7 +110,7 @@ async def post_token_json(
     endpoint: str,
     config: BydConfig,
     session: Session,
-    transport: SecureTransport,
+    transport: Transport,
     inner: dict[str, str],
     now_ms: int | None = None,
     vin: str | None = None,
@@ -137,3 +138,22 @@ async def post_token_json(
         )
 
     return decode_respond_data(endpoint=endpoint, response=response, content_key=content_key)
+
+
+async def fetch_vehicle_list(
+    config: BydConfig,
+    session: Session,
+    transport: Transport,
+) -> list[Vehicle]:
+    """Fetch all vehicles associated with the authenticated user."""
+    endpoint = "/app/account/getAllListByUserId"
+    inner = build_inner_base(config)
+    decoded = await post_token_json(
+        endpoint=endpoint,
+        config=config,
+        session=session,
+        transport=transport,
+        inner=inner,
+    )
+    items = decoded if isinstance(decoded, list) else []
+    return [Vehicle.model_validate(item) for item in items]

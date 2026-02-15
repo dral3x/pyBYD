@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 
 from pybyd._api._common import build_inner_base, post_token_json
-from pybyd._transport import SecureTransport
+from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.models.energy import EnergyConsumption
 from pybyd.session import Session
@@ -25,7 +25,7 @@ _NOT_SUPPORTED_CODES: frozenset[str] = frozenset({"1001"})
 async def fetch_energy_consumption(
     config: BydConfig,
     session: Session,
-    transport: SecureTransport,
+    transport: Transport,
     vin: str,
 ) -> EnergyConsumption:
     """Fetch energy consumption data for a vehicle.
@@ -36,7 +36,7 @@ async def fetch_energy_consumption(
         Client configuration.
     session : Session
         Authenticated session.
-    transport : SecureTransport
+    transport : Transport
         HTTP transport.
     vin : str
         Vehicle Identification Number.

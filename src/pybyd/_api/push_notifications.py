@@ -16,14 +16,14 @@ from typing import Any
 from pybyd._api._envelope import build_token_outer_envelope
 from pybyd._constants import SESSION_EXPIRED_CODES
 from pybyd._crypto.aes import aes_decrypt_utf8
-from pybyd._transport import SecureTransport
+from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.exceptions import (
     BydApiError,
     BydEndpointNotSupportedError,
     BydSessionExpiredError,
 )
-from pybyd.models.command_responses import CommandAck
+from pybyd.models.control import CommandAck
 from pybyd.models.push_notification import PushNotificationState
 from pybyd.session import Session
 
@@ -80,7 +80,7 @@ def _parse_push_state(data: dict[str, Any], vin: str) -> PushNotificationState:
 async def get_push_state(
     config: BydConfig,
     session: Session,
-    transport: SecureTransport,
+    transport: Transport,
     vin: str,
 ) -> PushNotificationState:
     """Fetch the current push notification state for a vehicle.
@@ -123,7 +123,7 @@ async def get_push_state(
 async def set_push_state(
     config: BydConfig,
     session: Session,
-    transport: SecureTransport,
+    transport: Transport,
     vin: str,
     *,
     enable: bool,

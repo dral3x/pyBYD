@@ -158,7 +158,7 @@ MQTT-related configuration:
 
 - `mqtt_enabled` / `BYD_MQTT_ENABLED` (default: enabled)
 - `mqtt_keepalive` / `BYD_MQTT_KEEPALIVE` (default: 120)
-- `mqtt_command_timeout` / `BYD_MQTT_COMMAND_TIMEOUT` (default: 8.0)
+- `mqtt_timeout` / `BYD_MQTT_TIMEOUT` (default: 10.0)
 
 `verify_control_password(...)` is available as an explicit helper call,
 but remote commands are sent directly with `commandPwd` and rely on API

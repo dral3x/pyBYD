@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
 from http.cookies import SimpleCookie
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Protocol
 
 import aiohttp
 
@@ -18,81 +18,53 @@ from pybyd.exceptions import BydTransportError
 _logger = logging.getLogger(__name__)
 
 
-class SecureTransport:
-    """HTTP transport that handles Bangcle envelope encoding and cookie persistence.
+class Transport(Protocol):
+    """Structural transport interface used by endpoint modules.
 
-    Parameters
-    ----------
-    config : BydConfig
-        Client configuration (provides ``base_url``).
-    codec : BangcleCodec
-        Bangcle envelope codec.
-    http_session : aiohttp.ClientSession
-        HTTP session for making requests.
+    Having a protocol here makes it easy to pass test doubles/mocks while
+    keeping the production implementation (`SecureTransport`) concrete.
     """
+
+    async def post_secure(self, endpoint: str, outer_payload: Mapping[str, Any]) -> dict[str, Any]:
+        ...
+
+
+class SecureTransport:
+    """HTTP transport that handles Bangcle envelope encoding and cookie persistence."""
 
     def __init__(
         self,
         config: BydConfig,
         codec: BangcleCodec,
         http_session: aiohttp.ClientSession,
-        trace_recorder: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._config = config
         self._codec = codec
         self._http = http_session
         self._cookies: dict[str, str] = {}
-        self._trace_recorder = trace_recorder
-
-    @staticmethod
-    def _redact(value: Any) -> Any:
-        """Recursively redact sensitive fields in trace payloads."""
-        sensitive_keys = {
-            "password",
-            "commandPwd",
-            "encryToken",
-            "signToken",
-            "token",
-            "authorization",
-            "cookie",
-        }
-        if isinstance(value, dict):
-            redacted: dict[str, Any] = {}
-            for key, inner_value in value.items():
-                if key in sensitive_keys:
-                    redacted[key] = "***REDACTED***"
-                else:
-                    redacted[key] = SecureTransport._redact(inner_value)
-            return redacted
-        if isinstance(value, list):
-            return [SecureTransport._redact(item) for item in value]
-        return value
-
-    def _emit_trace(self, payload: dict[str, Any]) -> None:
-        """Emit a trace payload to the configured recorder."""
-        if self._trace_recorder is None:
-            return
-        try:
-            self._trace_recorder(self._redact(payload))
-        except Exception:
-            _logger.debug("trace recorder failed", exc_info=True)
+        self._cookie_header: str = ""
 
     def _update_cookies(self, headers: Any) -> None:
         """Extract Set-Cookie headers and store them."""
         raw_cookies = headers.getall("Set-Cookie", [])
+        changed = False
         for raw in raw_cookies:
             cookie: SimpleCookie = SimpleCookie()
             cookie.load(raw)
             for key, morsel in cookie.items():
-                self._cookies[key] = morsel.value
+                value = morsel.value
+                if self._cookies.get(key) != value:
+                    self._cookies[key] = value
+                    changed = True
+
+        if changed:
+            self._cookie_header = "; ".join(f"{k}={v}" for k, v in self._cookies.items())
 
     def _build_cookie_header(self) -> str:
         """Build a Cookie header string from stored cookies."""
-        if not self._cookies:
-            return ""
-        return "; ".join(f"{k}={v}" for k, v in self._cookies.items())
+        return self._cookie_header
 
-    async def post_secure(self, endpoint: str, outer_payload: dict[str, Any]) -> dict[str, Any]:
+    async def post_secure(self, endpoint: str, outer_payload: Mapping[str, Any]) -> dict[str, Any]:
         """Send a signed request through the Bangcle envelope layer.
 
         1. JSON-encode the outer payload
@@ -100,23 +72,6 @@ class SecureTransport:
         3. POST as ``{"request": "<encoded>"}``
         4. Bangcle-decode the ``{"response": "<encoded>"}`` reply
         5. Return the decoded JSON dict
-
-        Parameters
-        ----------
-        endpoint : str
-            API path (e.g. ``"/app/account/login"``).
-        outer_payload : dict
-            The outer payload dict to send.
-
-        Returns
-        -------
-        dict
-            Decoded response payload.
-
-        Raises
-        ------
-        BydTransportError
-            On HTTP errors or missing/invalid response structure.
         """
         encoded = self._codec.encode_envelope(json.dumps(outer_payload, separators=(",", ":")))
 
@@ -133,27 +88,13 @@ class SecureTransport:
         url = f"{self._config.base_url}{endpoint}"
         body = json.dumps({"request": encoded})
 
-        trace_payload: dict[str, Any] = {
-            "endpoint": endpoint,
-            "url": url,
-            "request": {
-                "outer": outer_payload,
-                "encoded": encoded,
-            },
-        }
-
         _logger.debug("POST %s", url)
 
         try:
             async with self._http.post(url, data=body, headers=headers) as resp:
                 self._update_cookies(resp.headers)
                 text = await resp.text()
-                trace_payload["http"] = {
-                    "status": resp.status,
-                    "body": text,
-                }
                 if resp.status != 200:
-                    self._emit_trace(trace_payload)
                     raise BydTransportError(
                         f"HTTP {resp.status} from {endpoint}: {text[:200]}",
                         status_code=resp.status,
@@ -162,11 +103,6 @@ class SecureTransport:
         except BydTransportError:
             raise
         except aiohttp.ClientError as exc:
-            trace_payload["error"] = {
-                "stage": "request",
-                "message": str(exc),
-            }
-            self._emit_trace(trace_payload)
             raise BydTransportError(
                 f"Request to {endpoint} failed: {exc}",
                 endpoint=endpoint,
@@ -175,23 +111,12 @@ class SecureTransport:
         try:
             body_json = json.loads(text)
         except json.JSONDecodeError as exc:
-            trace_payload["error"] = {
-                "stage": "outer_json",
-                "message": str(exc),
-            }
-            self._emit_trace(trace_payload)
             raise BydTransportError(
                 f"Invalid JSON from {endpoint}: {text[:200]}",
                 endpoint=endpoint,
             ) from exc
 
         if not isinstance(body_json, dict) or "response" not in body_json:
-            trace_payload["error"] = {
-                "stage": "outer_json",
-                "message": "missing_response_field",
-                "body": body_json,
-            }
-            self._emit_trace(trace_payload)
             raise BydTransportError(
                 f"Missing 'response' field from {endpoint}",
                 endpoint=endpoint,
@@ -199,12 +124,6 @@ class SecureTransport:
 
         response_str = body_json["response"]
         if not isinstance(response_str, str) or not response_str.strip():
-            trace_payload["error"] = {
-                "stage": "inner_envelope",
-                "message": "empty_response_payload",
-                "body": body_json,
-            }
-            self._emit_trace(trace_payload)
             raise BydTransportError(
                 f"Empty response payload from {endpoint}",
                 endpoint=endpoint,
@@ -219,21 +138,9 @@ class SecureTransport:
         try:
             result: dict[str, Any] = json.loads(decoded_text)
         except json.JSONDecodeError as exc:
-            trace_payload["error"] = {
-                "stage": "inner_json",
-                "message": str(exc),
-                "decoded": decoded_text,
-            }
-            self._emit_trace(trace_payload)
             raise BydTransportError(
                 f"Bangcle response from {endpoint} is not JSON: {decoded_text[:64]}",
                 endpoint=endpoint,
             ) from exc
-
-        trace_payload["response"] = {
-            "outer": body_json,
-            "decoded": result,
-        }
-        self._emit_trace(trace_payload)
 
         return result

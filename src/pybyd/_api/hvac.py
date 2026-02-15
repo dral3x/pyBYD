@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 
 from pybyd._api._common import build_inner_base, post_token_json
-from pybyd._transport import SecureTransport
+from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.models.hvac import HvacStatus
 from pybyd.session import Session
@@ -25,7 +25,7 @@ _NOT_SUPPORTED_CODES: frozenset[str] = frozenset({"1001"})
 async def fetch_hvac_status(
     config: BydConfig,
     session: Session,
-    transport: SecureTransport,
+    transport: Transport,
     vin: str,
 ) -> HvacStatus:
     """Fetch current HVAC/climate control status for a vehicle."""

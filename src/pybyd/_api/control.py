@@ -16,12 +16,12 @@ import logging
 import secrets
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any, cast
+from typing import Any
 
 from pybyd._api._envelope import build_token_outer_envelope
 from pybyd._constants import SESSION_EXPIRED_CODES
 from pybyd._crypto.aes import aes_decrypt_utf8
-from pybyd._transport import SecureTransport
+from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.exceptions import (
     BydApiError,
@@ -31,9 +31,7 @@ from pybyd.exceptions import (
     BydRemoteControlError,
     BydSessionExpiredError,
 )
-from pybyd.ingestion.normalize import safe_int
-from pybyd.models.command_responses import VerifyControlPasswordResponse
-from pybyd.models.control import RemoteCommand, RemoteControlResult
+from pybyd.models.control import RemoteCommand, RemoteControlResult, VerifyControlPasswordResponse
 from pybyd.session import Session
 
 _logger = logging.getLogger(__name__)
@@ -110,7 +108,7 @@ def _build_verify_control_password_inner(
 async def verify_control_password(
     config: BydConfig,
     session: Session,
-    transport: SecureTransport,
+    transport: Transport,
     vin: str,
     command_pwd: str,
 ) -> VerifyControlPasswordResponse:
@@ -175,7 +173,7 @@ async def verify_control_password(
                 endpoint=VERIFY_CONTROL_PASSWORD_ENDPOINT,
             )
 
-        raw = cast(dict[str, Any], parsed)
+        raw: dict[str, Any] = parsed
         ok_value = raw.get("ok")
         ok = ok_value if isinstance(ok_value, bool) else None
         return VerifyControlPasswordResponse(vin=vin, ok=ok, raw=raw)
@@ -199,8 +197,8 @@ def _is_remote_control_ready(data: dict[str, Any]) -> bool:
     """
     if not data:
         return False
-    control_state = safe_int(data.get("controlState"))
-    if control_state is not None and control_state != 0:
+    control_state = data.get("controlState")
+    if control_state is not None and int(control_state) != 0:
         return True
     if "res" in data:
         return True
@@ -222,15 +220,13 @@ async def _fetch_control_endpoint(
     endpoint: str,
     config: BydConfig,
     session: Session,
-    transport: SecureTransport,
+    transport: Transport,
     vin: str,
     command: RemoteCommand,
     *,
     control_params: dict[str, Any] | None = None,
     command_pwd: str | None = None,
     request_serial: str | None = None,
-    debug_recorder: Callable[[dict[str, Any]], None] | None = None,
-    phase: str = "request",
 ) -> tuple[dict[str, Any], str | None]:
     """Fetch a single control endpoint, returning (result_dict, next_serial)."""
     now_ms = int(time.time() * 1000)
@@ -244,44 +240,11 @@ async def _fetch_control_endpoint(
         request_serial=request_serial,
     )
     outer, content_key = build_token_outer_envelope(config, session, inner, now_ms)
-    debug_entry: dict[str, Any] = {
-        "command": command.name,
-        "vin": vin,
-        "endpoint": endpoint,
-        "phase": phase,
-        "request_serial": request_serial,
-        "request": {
-            "inner": inner,
-            "outer": outer,
-            "encrypted_inner": outer.get("encryData"),
-        },
-    }
 
-    try:
-        response = await transport.post_secure(endpoint, outer)
-    except Exception as exc:
-        if debug_recorder is not None:
-            debug_entry["error"] = {
-                "stage": "transport",
-                "message": str(exc),
-            }
-            debug_recorder(debug_entry)
-        raise
-
-    debug_entry["response"] = {
-        "outer": response,
-        "encrypted_inner": response.get("respondData"),
-    }
+    response = await transport.post_secure(endpoint, outer)
 
     resp_code = str(response.get("code", ""))
     if resp_code != "0":
-        debug_entry["error"] = {
-            "stage": "api",
-            "code": response.get("code"),
-            "message": response.get("message", ""),
-        }
-        if debug_recorder is not None:
-            debug_recorder(debug_entry)
         if resp_code in SESSION_EXPIRED_CODES:
             raise BydSessionExpiredError(
                 f"{endpoint} failed: code={resp_code} message={response.get('message', '')}",
@@ -312,20 +275,7 @@ async def _fetch_control_endpoint(
             endpoint=endpoint,
         )
 
-    try:
-        result = json.loads(aes_decrypt_utf8(response["respondData"], content_key))
-    except Exception as exc:
-        debug_entry["error"] = {
-            "stage": "decrypt",
-            "message": str(exc),
-        }
-        if debug_recorder is not None:
-            debug_recorder(debug_entry)
-        raise
-
-    debug_entry["response"]["decrypted_inner"] = result
-    if debug_recorder is not None:
-        debug_recorder(debug_entry)
+    result = json.loads(aes_decrypt_utf8(response["respondData"], content_key))
     next_serial = (result.get("requestSerial") if isinstance(result, dict) else None) or request_serial
 
     return result, next_serial
@@ -334,7 +284,7 @@ async def _fetch_control_endpoint(
 async def poll_remote_control(
     config: BydConfig,
     session: Session,
-    transport: SecureTransport,
+    transport: Transport,
     vin: str,
     command: RemoteCommand,
     *,
@@ -346,7 +296,6 @@ async def poll_remote_control(
     rate_limit_delay: float = 5.0,
     command_retries: int = 3,
     command_retry_delay: float = 3.0,
-    debug_recorder: Callable[[dict[str, Any]], None] | None = None,
     mqtt_result_waiter: Callable[[str | None], Awaitable[RemoteControlResult | None]] | None = None,
 ) -> RemoteControlResult:
     """Send a remote control command and poll until completion.
@@ -357,7 +306,7 @@ async def poll_remote_control(
         Client configuration.
     session : Session
         Authenticated session.
-    transport : SecureTransport
+    transport : Transport
         HTTP transport.
     vin : str
         Vehicle Identification Number.
@@ -412,7 +361,6 @@ async def poll_remote_control(
                 poll_interval=poll_interval,
                 rate_limit_retries=rate_limit_retries,
                 rate_limit_delay=rate_limit_delay,
-                debug_recorder=debug_recorder,
                 mqtt_result_waiter=mqtt_result_waiter,
             )
         except BydRemoteControlError as exc:
@@ -435,7 +383,7 @@ async def poll_remote_control(
 async def _poll_remote_control_once(
     config: BydConfig,
     session: Session,
-    transport: SecureTransport,
+    transport: Transport,
     vin: str,
     command: RemoteCommand,
     *,
@@ -445,7 +393,6 @@ async def _poll_remote_control_once(
     poll_interval: float = 1.5,
     rate_limit_retries: int = 3,
     rate_limit_delay: float = 5.0,
-    debug_recorder: Callable[[dict[str, Any]], None] | None = None,
     mqtt_result_waiter: Callable[[str | None], Awaitable[RemoteControlResult | None]] | None = None,
 ) -> RemoteControlResult:
     """Single attempt: trigger + poll.  Raises on failure."""
@@ -461,8 +408,6 @@ async def _poll_remote_control_once(
                 command,
                 control_params=control_params,
                 command_pwd=command_pwd,
-                debug_recorder=debug_recorder,
-                phase="trigger",
             )
             break
         except BydApiError as exc:
@@ -537,8 +482,6 @@ async def _poll_remote_control_once(
                 vin,
                 command,
                 request_serial=serial,
-                debug_recorder=debug_recorder,
-                phase="poll",
             )
             _logger.debug(
                 "Remote control %s poll attempt=%d controlState=%s serial=%s",

@@ -16,14 +16,14 @@ from typing import Any
 from pybyd._api._envelope import build_token_outer_envelope
 from pybyd._constants import SESSION_EXPIRED_CODES
 from pybyd._crypto.aes import aes_decrypt_utf8
-from pybyd._transport import SecureTransport
+from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.exceptions import (
     BydApiError,
     BydEndpointNotSupportedError,
     BydSessionExpiredError,
 )
-from pybyd.models.command_responses import CommandAck
+from pybyd.models.control import CommandAck
 from pybyd.session import Session
 
 _logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ def _build_save_schedule_inner(
 async def toggle_smart_charging(
     config: BydConfig,
     session: Session,
-    transport: SecureTransport,
+    transport: Transport,
     vin: str,
     *,
     enable: bool,
@@ -146,7 +146,7 @@ async def toggle_smart_charging(
 async def save_charging_schedule(
     config: BydConfig,
     session: Session,
-    transport: SecureTransport,
+    transport: Transport,
     vin: str,
     *,
     target_soc: int,

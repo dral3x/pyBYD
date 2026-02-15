@@ -23,7 +23,7 @@ URL base: https://dilinkappoversea-eu.byd.auto
 | Endpoint (path) | Purpose | Implementation |
 |---|---|---|
 | `/app/account/login` | Authentication | `src/pybyd/_api/login.py` |
-| `/app/account/getAllListByUserId` | Vehicle list | `src/pybyd/ingestion/vehicles.py` |
+| `/app/account/getAllListByUserId` | Vehicle list | `src/pybyd/_api/_common.py` |
 | `/vehicleInfo/vehicle/vehicleRealTimeRequest` | Realtime trigger | `src/pybyd/_api/realtime.py` |
 | `/vehicleInfo/vehicle/vehicleRealTimeResult` | Realtime poll | `src/pybyd/_api/realtime.py` |
 | `/control/getStatusNow` | HVAC status | `src/pybyd/_api/hvac.py` |
@@ -45,24 +45,19 @@ URL base: https://dilinkappoversea-eu.byd.auto
 
 ---
 
-## MQTT events (integrated)
+## MQTT events
 
-pyBYD consumes decrypted MQTT events from `oversea/res/<userId>` and uses
-them to enrich cache state between HTTP polls.
-
-Current integrated events:
+pyBYD consumes decrypted MQTT events from `oversea/res/<userId>`.
 
 - `vehicleInfo`
 	- Source: `payload.data.respondData`
-	- Primary merge target: realtime cache (`VehicleDataCache.merge_realtime`)
-	- Additional projections:
-		- HVAC cache: temperature + seat/steering fields (+ `airRunState -> cycleChoice`)
-		- Charging cache: SOC/charging/connect/wait/full-time fields (`time -> updateTime`)
-		- Energy cache: `totalEnergy` and related consumption strings when present
+	- Contains full realtime telemetry (same camelCase dict as HTTP poll).
+	- Delivered after `vehicleRealTimeRequest` trigger and periodically.
+	- Parsed as `VehicleRealtimeData` and forwarded via the `on_vehicle_info` callback.
 - `remoteControl`
 	- Source: `payload.data.respondData`
-	- Parsed using the same immediate/polled rules as HTTP control parser
-	- Used for MQTT-first command completion with HTTP polling fallback
+	- Parsed using the same immediate/polled rules as HTTP control parser.
+	- Used for MQTT-first command completion with HTTP polling fallback.
 
 Unknown/unanticipated MQTT envelopes are ignored and logged at debug level.
 
@@ -70,8 +65,9 @@ Unknown/unanticipated MQTT envelopes are ignored and logged at debug level.
 
 The tables below describe field names and observed meanings, but pyBYD also normalizes values while parsing:
 
-- Numeric parsing: most numeric fields accept `int`, `float`, or numeric strings; `None` and `""` become `None`. NaN becomes `None`.
-- Enum parsing: fields parsed via the parser helper `_to_enum(...)` return the matching enum member when known; if the integer code is unknown, the raw integer is kept.
+- **Alias convention**: all models use `alias_generator=to_camel` from Pydantic. The Python field name is always the snake_case version of the API camelCase key (e.g. `elecPercent` → `elec_percent`). Where the API key doesn't follow `to_camel(field_name)`, a `_KEY_ALIASES` dict normalises incoming keys in a before-validator (e.g. `abs` → `abs_warning`, `time` → `timestamp`, `leftFrontTirepressure` → `left_front_tire_pressure`, `backCover` → `trunk_lid`). The "Python field" column in the tables below is kept for reference but can be derived mechanically from the API field name.
+- Numeric parsing: most numeric fields accept `int`, `float`, or numeric strings; `None` and `""` become `None`. NaN becomes `None`. Coercion is handled via `CoercedFloat` / `CoercedInt` annotated types.
+- Enum parsing: enum fields use `BeforeValidator(partial(coerce_enum, ...))`. If the integer code is unknown, the raw integer is kept.
 - Placeholders: some string fields may be reported as `"--"` by the API. For fields parsed as `str` in pyBYD, the placeholder is kept as-is.
 - Vehicle list strings: the vehicle list parser normalizes missing string fields to the empty string (`""`) rather than `None`.
 
@@ -122,8 +118,8 @@ Parser: `src/pybyd/_api/realtime.py`
 | Charging | `waitStatus` | `wait_status` | `int | None` | charge wait status (unconfirmed) |
 | Charging | `fullHour` | `full_hour` | `int | None` | hours to full; -1 means not available (confirmed) |
 | Charging | `fullMinute` | `full_minute` | `int | None` | minutes to full; -1 means not available (confirmed) |
-| Charging | `remainingHours` | `charge_remaining_hours` | `int | None` | remaining hours; -1 means not available (confirmed) |
-| Charging | `remainingMinutes` | `charge_remaining_minutes` | `int | None` | remaining minutes; -1 means not available (confirmed) |
+| Charging | `remainingHours` | `remaining_hours` | `int | None` | remaining hours; -1 means not available (confirmed) |
+| Charging | `remainingMinutes` | `remaining_minutes` | `int | None` | remaining minutes; -1 means not available (confirmed) |
 | Charging | `bookingChargeState` | `booking_charge_state` | `int | None` | scheduled charging state; 0=off (confirmed) |
 | Charging | `bookingChargingHour` | `booking_charging_hour` | `int | None` | scheduled charge start hour (unconfirmed) |
 | Charging | `bookingChargingMinute` | `booking_charging_minute` | `int | None` | scheduled charge start minute (unconfirmed) |
@@ -296,9 +292,7 @@ URL: https://dilinkappoversea-eu.byd.auto/app/account/getAllListByUserId
 
 Model: `Vehicle`
 
-Parser: `src/pybyd/ingestion/vehicles.py`
-
-Note: Vehicle list parsing is implemented in the ingestion layer.
+Parser: `src/pybyd/_api/_common.py`
 
 | API field | Python field | Type | Values / notes |
 |---|---|---|---|
