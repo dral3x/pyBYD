@@ -7,7 +7,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 import aiohttp
@@ -60,13 +60,16 @@ class _MqttWaiter:
     """A pending MQTT wait registered by a client method.
 
     Matching rules: every non-None field must match the incoming event.
-    ``serial`` is matched against ``requestSerial`` in the respond data.
+    ``serial`` is matched against a derived request serial which usually
+    comes from ``respondData.requestSerial`` but for some event types
+    (notably ``remoteControl``) is carried as ``data.uuid``.
     """
 
     vin: str
     future: asyncio.Future[dict[str, Any]]
     event_type: str | None = None
     serial: str | None = None
+    created_at: float = field(default_factory=time.monotonic)
 
 
 def _now_ms() -> int:
@@ -83,6 +86,8 @@ class BydClient:
             await client.login()
             vehicles = await client.get_vehicles()
     """
+
+    _REMOTE_CONTROL_OPPORTUNISTIC_WINDOW_S: float = 2.0
 
     def __init__(
         self,
@@ -239,10 +244,29 @@ class BydClient:
         """Handle a decrypted MQTT event (called from the MQTT thread via call_soon_threadsafe)."""
         # BYD wraps payloads in data.respondData
         data = event.payload.get("data")
-        respond_data = data.get("respondData") if isinstance(data, dict) else event.payload
+        respond_data_raw = data.get("respondData") if isinstance(data, dict) else event.payload
 
-        if not isinstance(respond_data, dict):
+        if not isinstance(respond_data_raw, dict):
             return
+
+        # Normalise to a standalone dict (avoid mutating the original payload)
+        respond_data: dict[str, Any] = dict(respond_data_raw)
+
+        # Derive correlation serial used by _mqtt_wait.
+        # Most events include respondData.requestSerial, but remoteControl often uses data.uuid.
+        serial: str | None = None
+        serial_value = respond_data.get("requestSerial")
+        if isinstance(serial_value, str) and serial_value:
+            serial = serial_value
+        elif isinstance(data, dict):
+            for key in ("requestSerial", "uuid"):
+                candidate = data.get(key)
+                if isinstance(candidate, str) and candidate:
+                    serial = candidate
+                    break
+
+        if serial:
+            respond_data.setdefault("requestSerial", serial)
 
         # Generic callback — fire for every MQTT event
         if self._on_mqtt_event_cb is not None and event.vin:
@@ -260,21 +284,45 @@ class BydClient:
                 _logger.debug("Failed to parse MQTT vehicleInfo", exc_info=True)
 
         # Dispatch to generic MQTT waiters
-        serial = respond_data.get("requestSerial")
-        serial = serial if isinstance(serial, str) else None
+        serial_value = respond_data.get("requestSerial")
+        serial = serial_value if isinstance(serial_value, str) and serial_value else None
 
         matched: list[_MqttWaiter] = []
         remaining: list[_MqttWaiter] = []
+        opportunistic_used = False
+        now = time.monotonic()
         for w in self._mqtt_waiters:
+            if w.future.done():
+                remaining.append(w)
+                continue
+
+            if w.vin != event.vin:
+                remaining.append(w)
+                continue
+
+            if w.event_type is not None and w.event_type != event.event:
+                remaining.append(w)
+                continue
+
+            # Normal case: strict correlation on requestSerial.
+            if w.serial is None or w.serial == serial:
+                matched.append(w)
+                continue
+
+            # Opportunistic fallback (remoteControl only): some MQTT payloads omit uuid/requestSerial.
+            # To avoid accidentally resolving unrelated commands, only match the oldest pending waiter
+            # within a short window, and only when the incoming event provides no serial.
             if (
-                not w.future.done()
-                and w.vin == event.vin
-                and (w.event_type is None or w.event_type == event.event)
-                and (w.serial is None or w.serial == serial)
+                not opportunistic_used
+                and serial is None
+                and event.event == "remoteControl"
+                and (now - w.created_at) <= self._REMOTE_CONTROL_OPPORTUNISTIC_WINDOW_S
             ):
                 matched.append(w)
-            else:
-                remaining.append(w)
+                opportunistic_used = True
+                continue
+
+            remaining.append(w)
         self._mqtt_waiters = remaining
         for w in matched:
             if not w.future.done():
