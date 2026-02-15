@@ -33,41 +33,39 @@ class AcSwitch(BydEnum):
 
 
 class HvacOverallStatus(BydEnum):
-    """Overall HVAC system status.
+    """Overall HVAC status.
 
-    Only a subset of values are confirmed. Unknown values are preserved
-    by typing fields as ``HvacOverallStatus | int | None``.
+    API_MAPPING notes: ``2`` observed while A/C active (confirmed).
     """
 
     UNKNOWN = -1
-    MODE_2 = 2 // find out.
+    ACTIVE = 2
 
 
 class AirConditioningMode(BydEnum):
     """A/C mode code.
 
-    Only value ``1`` has been observed so far.
+    API_MAPPING notes: ``1`` observed (confirmed); exact meaning unconfirmed.
     """
 
     UNKNOWN = -1
-    MODE_1 = 1 // find out.
+    MODE_1 = 1
 
 
 class HvacWindMode(BydEnum):
     """Fan (wind) mode code.
 
-    Only value ``3`` has been observed so far.
+    API_MAPPING notes: ``3`` observed (confirmed); exact meaning unconfirmed.
     """
 
     UNKNOWN = -1
-    MODE_3 = 3 // find out.
+    MODE_3 = 3
 
 
 class HvacWindPosition(BydEnum):
     """Airflow direction code (wind position).
 
-    Mapping not confirmed yet; keep ``| int`` in the model to preserve
-    raw codes.
+    API_MAPPING notes: airflow direction (unconfirmed).
     """
 
     UNKNOWN = -1
@@ -78,24 +76,33 @@ class HvacStatus(BydBaseModel):
 
     # --- A/C state ---
     ac_switch: AcSwitch | int | None = None
+    """0=off, 1=on (confirmed)."""
     status: HvacOverallStatus | int | None = None
+    """Overall HVAC status; ``2`` observed while A/C active (confirmed)."""
     air_conditioning_mode: AirConditioningMode | int | None = None
+    """Mode code; ``1`` observed (confirmed)."""
     wind_mode: HvacWindMode | int | None = None
+    """Fan mode code; ``3`` observed (confirmed)."""
     wind_position: HvacWindPosition | int | None = None
+    """Airflow direction (unconfirmed)."""
     cycle_choice: AirCirculationMode | int | None = None
+    """``2`` observed in live capture (confirmed); exact mapping still unconfirmed."""
 
     # --- Temperature ---
     main_setting_temp: float | None = None
-    """Driver-side set temperature on BYD scale (1-17)."""
+    """Set temp integer on BYD scale (1-17) (confirmed)."""
     main_setting_temp_new: float | None = None
-    """Driver-side set temperature (°C, precise)."""
+    """Set temp (°C, precise) (confirmed)."""
     copilot_setting_temp: float | None = None
-    """Passenger-side set temperature on BYD scale (1-17)."""
+    """Passenger set temp on BYD scale (1-17) (confirmed)."""
     copilot_setting_temp_new: float | None = None
-    """Passenger-side set temperature (°C, precise)."""
+    """Passenger set temp (°C, precise) (confirmed)."""
     temp_in_car: float | None = None
+    """Interior °C; ``-129`` means unavailable (confirmed)."""
     temp_out_car: float | None = None
+    """Exterior °C (confirmed)."""
     whether_support_adjust_temp: int | None = None
+    """1=supported (confirmed)."""
 
     # --- Defrost ---
     front_defrost_status: int | None = None
