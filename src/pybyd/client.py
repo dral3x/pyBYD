@@ -214,7 +214,7 @@ class BydClient:
             bootstrap = await fetch_mqtt_bootstrap(self._config, session, transport)
             runtime = BydMqttRuntime(
                 loop=loop,
-                decrypt_key_hex=session.encry_token,
+                decrypt_key_hex=session.content_key(),
                 on_event=self._on_mqtt_event,
                 keepalive=self._config.mqtt_keepalive,
                 logger=_logger,

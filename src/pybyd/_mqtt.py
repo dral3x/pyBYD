@@ -121,7 +121,8 @@ async def fetch_mqtt_bootstrap(
 
 def decode_mqtt_payload(payload: bytes, decrypt_key_hex: str) -> dict[str, Any]:
     """Decrypt and parse MQTT payload bytes into a JSON object."""
-    raw_text = payload.decode("ascii", errors="replace").strip()
+    raw_text = payload.decode("ascii", errors="replace")
+    raw_text = "".join(raw_text.split())
     plain = aes_decrypt_utf8(raw_text, decrypt_key_hex)
     parsed = json.loads(plain)
     if not isinstance(parsed, dict):
