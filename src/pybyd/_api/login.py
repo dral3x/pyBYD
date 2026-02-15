@@ -1,4 +1,7 @@
-"""Login endpoint: /app/account/login.
+"""Login endpoint.
+
+Endpoint:
+  - /app/account/login
 
 Ports buildLoginRequest from client.js lines 231-286.
 """
@@ -6,6 +9,7 @@ Ports buildLoginRequest from client.js lines 231-286.
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import time
 from typing import Any
@@ -16,6 +20,8 @@ from pybyd._crypto.signing import build_sign_string
 from pybyd.config import BydConfig
 from pybyd.exceptions import BydAuthenticationError
 from pybyd.models.token import AuthToken
+
+_logger = logging.getLogger(__name__)
 
 
 def _common_outer_fields(config: BydConfig) -> dict[str, str]:

@@ -5,21 +5,25 @@ Mapped from ``/control/smartCharge/homePage`` response documented in API_MAPPING
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import ClassVar
 
-from pydantic import model_validator
-
-from pybyd.models._base import BydBaseModel, BydTimestamp
-
-# BYD sends the same value under different keys depending on the endpoint.
-_KEY_ALIASES: dict[str, str] = {
-    "elecPercent": "soc",
-    "time": "updateTime",
-}
+from pybyd.models._base import BydBaseModel, BydTimestamp, is_negative
 
 
 class ChargingStatus(BydBaseModel):
     """Smart charging status for a vehicle."""
+
+    # BYD sends the same value under different keys depending on the endpoint.
+    _KEY_ALIASES: ClassVar[dict[str, str]] = {
+        "elecPercent": "soc",
+        "time": "updateTime",
+    }
+
+    _SENTINEL_RULES: ClassVar[dict[str, Callable[..., bool]]] = {
+        "full_hour": is_negative,
+        "full_minute": is_negative,
+    }
 
     vin: str = ""
     soc: int | None = None
@@ -42,22 +46,15 @@ class ChargingStatus(BydBaseModel):
 
     @property
     def time_to_full_available(self) -> bool:
-        return (
-            self.full_hour is not None
-            and self.full_minute is not None
-            and self.full_hour >= 0
-            and self.full_minute >= 0
-        )
+        return self.full_hour is not None and self.full_minute is not None
 
-    @model_validator(mode="before")
-    @classmethod
-    def _normalise_keys(cls, values: Any) -> Any:
-        if not isinstance(values, dict):
-            return values
-        normalised: dict[str, Any] = {}
-        for k, v in values.items():
-            if isinstance(k, str):
-                normalised[_KEY_ALIASES.get(k, k)] = v
-            else:
-                normalised[str(k)] = v
-        return normalised
+    @property
+    def time_to_full_minutes(self) -> int | None:
+        """Total estimated minutes until fully charged.
+
+        Combines ``full_hour`` and ``full_minute`` into a single value.
+        Returns ``None`` when either component is unavailable.
+        """
+        if self.full_hour is None or self.full_minute is None:
+            return None
+        return self.full_hour * 60 + self.full_minute

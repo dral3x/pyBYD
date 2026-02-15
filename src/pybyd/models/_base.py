@@ -18,14 +18,38 @@ from __future__ import annotations
 
 import enum
 import math
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, ClassVar
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 # Sentinel strings the BYD API uses for "not available".
 _SENTINELS = frozenset({"", "--", "NaN", "nan"})
+
+# ---------------------------------------------------------------------------
+# Shared sentinel predicates
+# ---------------------------------------------------------------------------
+
+
+def is_negative(value: int | float) -> bool:
+    """Return ``True`` when *value* is negative (e.g. ``-1`` sentinel)."""
+    return value < 0
+
+
+def is_temp_sentinel(value: int | float) -> bool:
+    """Return ``True`` when *value* is the BYD temperature sentinel ``-129``."""
+    return value in (-129.0, -129)
+
+
+# ---------------------------------------------------------------------------
+# Common key aliases shared across multiple BYD response models.
+# BYD API sends "stearing" (typo) instead of "steering".
+# ---------------------------------------------------------------------------
+COMMON_KEY_ALIASES: dict[str, str] = {
+    "stearingWheelHeatState": "steeringWheelHeatState",
+}
 
 # Threshold to distinguish seconds from milliseconds.
 _MS_THRESHOLD = 1_000_000_000_000
@@ -61,7 +85,12 @@ class BydEnum(enum.IntEnum):
     @classmethod
     def _missing_(cls, value: object) -> BydEnum:
         # noinspection PyUnresolvedReferences
-        return cls.UNKNOWN  # type: ignore[attr-defined]
+        # pylint: disable=no-member
+        if hasattr(cls, "UNKNOWN"):
+            unknown: BydEnum = cls.UNKNOWN  # type: ignore[attr-defined]
+            return unknown
+        # Fallback: return first member
+        return next(iter(cls))
 
 
 class BydBaseModel(BaseModel):
@@ -72,6 +101,16 @@ class BydBaseModel(BaseModel):
     * BYD sentinel values (``""``, ``"--"``, NaN) → dropped so
       the field default is used instead
     * Stashes the original API dict in ``raw``
+    * Post-construction sentinel normalisation via ``_SENTINEL_RULES``
+    """
+
+    _SENTINEL_RULES: ClassVar[dict[str, Callable[..., bool]]] = {}
+    """Per-field sentinel predicates.
+
+    Subclasses override this to declare ``{"field_name": predicate}``
+    pairs.  After model construction the base ``_normalise_sentinels``
+    validator sets the field to ``None`` when *predicate(value)* is
+    ``True``.
     """
 
     model_config = ConfigDict(
@@ -84,20 +123,20 @@ class BydBaseModel(BaseModel):
     raw: dict[str, Any] = Field(default_factory=dict)
     """Original API response dict."""
 
-    @model_validator(mode="before")
-    @classmethod
-    def _clean_byd_values(cls, values: Any) -> Any:
-        """Strip BYD sentinel values, apply key aliases, and stash the raw payload."""
-        if not isinstance(values, dict):
-            return values
-        original = dict(values)
+    @staticmethod
+    def _clean_dict(values: dict[str, Any], aliases: dict[str, str] | None = None) -> dict[str, Any]:
+        """Strip BYD sentinel values and apply key aliases on *values*.
 
-        # Apply per-model key aliases (old API key → canonical camelCase key).
-        aliases: dict[str, str] = getattr(cls, "_KEY_ALIASES", {})
-        working = dict(original)
-        for old_key, new_key in aliases.items():
-            if old_key in working and new_key not in working:
-                working[new_key] = working.pop(old_key)
+        This is the core cleaning logic, extracted so subclass validators
+        (e.g. ``HvacStatus._unwrap_status_now``) can re-clean unwrapped
+        inner dicts that weren't visible to the first ``_clean_byd_values``
+        pass.
+        """
+        working = dict(values)
+        if aliases:
+            for old_key, new_key in aliases.items():
+                if old_key in working and new_key not in working:
+                    working[new_key] = working.pop(old_key)
 
         cleaned: dict[str, Any] = {}
         for key, value in working.items():
@@ -108,6 +147,18 @@ class BydBaseModel(BaseModel):
             if isinstance(value, float) and math.isnan(value):
                 continue
             cleaned[key] = value
+        return cleaned
+
+    @model_validator(mode="before")
+    @classmethod
+    def _clean_byd_values(cls, values: Any) -> Any:
+        """Strip BYD sentinel values, apply key aliases, and stash the raw payload."""
+        if not isinstance(values, dict):
+            return values
+        original = dict(values)
+
+        aliases: dict[str, str] = getattr(cls, "_KEY_ALIASES", {})
+        cleaned = BydBaseModel._clean_dict(original, aliases)
 
         # Only auto-stash raw when not explicitly provided (i.e. model_validate
         # from an API dict).  When constructing with kwargs that include raw=,
@@ -115,3 +166,19 @@ class BydBaseModel(BaseModel):
         if "raw" not in values:
             cleaned["raw"] = original
         return cleaned
+
+    @model_validator(mode="after")
+    def _normalise_sentinels(self) -> BydBaseModel:
+        """Replace per-field sentinel values with ``None``.
+
+        Uses the ``_SENTINEL_RULES`` class-variable which maps field
+        names to predicate callables.  If a field's current value is
+        not ``None`` and the predicate returns ``True``, the field is
+        set to ``None``.
+        """
+        sentinel_rules: dict[str, Callable[..., bool]] = getattr(type(self), "_SENTINEL_RULES", {})
+        for field_name, predicate in sentinel_rules.items():
+            val = getattr(self, field_name, None)
+            if val is not None and predicate(val):
+                object.__setattr__(self, field_name, None)
+        return self

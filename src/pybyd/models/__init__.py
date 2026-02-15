@@ -1,5 +1,6 @@
 """Data models for BYD API responses."""
 
+from pybyd._constants import VALID_CLIMATE_DURATIONS, minutes_to_time_span
 from pybyd.models._base import BydBaseModel, BydEnum, BydTimestamp, parse_byd_timestamp
 from pybyd.models.charging import ChargingStatus
 from pybyd.models.control import (
@@ -26,6 +27,7 @@ from pybyd.models.realtime import (
     OnlineState,
     PowerGear,
     SeatHeatVentState,
+    StearingWheelHeat,
     TirePressureUnit,
     VehicleRealtimeData,
     VehicleState,
@@ -38,23 +40,22 @@ from pybyd.models.vehicle import EmpowerRange, Vehicle
 __all__ = [
     "AirCirculationMode",
     "AuthToken",
+    "BatteryHeatParams",
     "BydBaseModel",
     "BydEnum",
     "BydTimestamp",
     "ChargingState",
     "ChargingStatus",
+    "ClimateScheduleParams",
+    "ClimateStartParams",
     "CommandAck",
     "ConnectState",
     "ControlState",
-    "BatteryHeatParams",
-    "ClimateScheduleParams",
-    "ClimateStartParams",
     "DoorOpenState",
     "EmpowerRange",
     "EnergyConsumption",
     "GpsInfo",
     "HvacStatus",
-    "celsius_to_scale",
     "LockState",
     "OnlineState",
     "PowerGear",
@@ -64,11 +65,15 @@ __all__ = [
     "SeatClimateParams",
     "SeatHeatVentState",
     "SmartChargingSchedule",
+    "StearingWheelHeat",
     "TirePressureUnit",
     "Vehicle",
     "VehicleRealtimeData",
     "VehicleState",
     "VerifyControlPasswordResponse",
     "WindowState",
+    "celsius_to_scale",
+    "minutes_to_time_span",
     "parse_byd_timestamp",
+    "VALID_CLIMATE_DURATIONS",
 ]

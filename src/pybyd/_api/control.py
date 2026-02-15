@@ -13,20 +13,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import secrets
-import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from pybyd._api._envelope import build_token_outer_envelope
-from pybyd._constants import SESSION_EXPIRED_CODES
-from pybyd._crypto.aes import aes_decrypt_utf8
+from pybyd._api._common import ENDPOINT_NOT_SUPPORTED_CODES, build_inner_base, post_token_json
 from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.exceptions import (
     BydApiError,
     BydControlPasswordError,
-    BydEndpointNotSupportedError,
     BydRateLimitError,
     BydRemoteControlError,
     BydSessionExpiredError,
@@ -37,17 +32,24 @@ from pybyd.session import Session
 _logger = logging.getLogger(__name__)
 
 CONTROL_PASSWORD_ERROR_CODES: frozenset[str] = frozenset({"5005", "5006"})
-ENDPOINT_NOT_SUPPORTED_CODES: frozenset[str] = frozenset({"1001"})
 REMOTE_CONTROL_SERVICE_ERROR_CODES: frozenset[str] = frozenset({"1009"})
 REMOTE_CONTROL_ENDPOINTS: frozenset[str] = frozenset({"/control/remoteControl", "/control/remoteControlResult"})
 VERIFY_CONTROL_PASSWORD_ENDPOINT = "/vehicle/vehicleswitch/verifyControlPassword"
+
+# Extra error-code mappings for control endpoints.
+_CONTROL_EXTRA_CODES: dict[frozenset[str], type[BydApiError]] = {
+    CONTROL_PASSWORD_ERROR_CODES: BydControlPasswordError,
+}
+_REMOTE_CONTROL_EXTRA_CODES: dict[frozenset[str], type[BydApiError]] = {
+    CONTROL_PASSWORD_ERROR_CODES: BydControlPasswordError,
+    REMOTE_CONTROL_SERVICE_ERROR_CODES: BydRemoteControlError,
+}
 
 
 def _build_control_inner(
     config: BydConfig,
     vin: str,
     command: RemoteCommand,
-    now_ms: int,
     *,
     control_params: dict[str, Any] | None = None,
     command_pwd: str | None = None,
@@ -63,25 +65,15 @@ def _build_control_inner(
     command_pwd
         Optional control password (PIN) sent as ``commandPwd``.
     """
-    inner: dict[str, Any] = {
-        "commandPwd": command_pwd or "",
-        "commandType": command.value,
-        "deviceType": config.device.device_type,
-        "imeiMD5": config.device.imei_md5,
-        "networkType": config.device.network_type,
-        "random": secrets.token_hex(16).upper(),
-        "timeStamp": str(now_ms),
-        "version": config.app_inner_version,
-        "vin": vin,
-    }
+    inner: dict[str, Any] = build_inner_base(config, vin=vin, request_serial=request_serial)
+    inner["commandPwd"] = command_pwd or ""
+    inner["commandType"] = command.value
     if control_params is not None:
         inner["controlParamsMap"] = json.dumps(
             control_params,
             separators=(",", ":"),
             sort_keys=True,
         )
-    if request_serial:
-        inner["requestSerial"] = request_serial
     return inner
 
 
@@ -89,20 +81,12 @@ def _build_verify_control_password_inner(
     config: BydConfig,
     vin: str,
     command_pwd: str,
-    now_ms: int,
 ) -> dict[str, Any]:
     """Build inner payload for control password verification endpoint."""
-    return {
-        "commandPwd": command_pwd,
-        "deviceType": config.device.device_type,
-        "functionType": "remoteControl",
-        "imeiMD5": config.device.imei_md5,
-        "networkType": config.device.network_type,
-        "random": secrets.token_hex(16).upper(),
-        "timeStamp": str(now_ms),
-        "version": config.app_inner_version,
-        "vin": vin,
-    }
+    inner: dict[str, Any] = build_inner_base(config, vin=vin)
+    inner["commandPwd"] = command_pwd
+    inner["functionType"] = "remoteControl"
+    return inner
 
 
 async def verify_control_password(
@@ -117,75 +101,26 @@ async def verify_control_password(
     Calls ``/vehicle/vehicleswitch/verifyControlPassword`` and returns the
     decrypted inner response payload.
     """
-    now_ms = int(time.time() * 1000)
-    inner = _build_verify_control_password_inner(config, vin, command_pwd, now_ms)
-    outer, content_key = build_token_outer_envelope(
-        config,
-        session,
-        inner,
-        now_ms,
+    inner = _build_verify_control_password_inner(config, vin, command_pwd)
+    data = await post_token_json(
+        endpoint=VERIFY_CONTROL_PASSWORD_ENDPOINT,
+        config=config,
+        session=session,
+        transport=transport,
+        inner=inner,
+        vin=vin,
+        not_supported_codes=ENDPOINT_NOT_SUPPORTED_CODES,
+        extra_code_map=_CONTROL_EXTRA_CODES,
         user_type="1",
     )
 
-    response = await transport.post_secure(VERIFY_CONTROL_PASSWORD_ENDPOINT, outer)
-    resp_code = str(response.get("code", ""))
-    if resp_code != "0":
-        if resp_code in SESSION_EXPIRED_CODES:
-            raise BydSessionExpiredError(
-                f"{VERIFY_CONTROL_PASSWORD_ENDPOINT} failed: code={resp_code} message={response.get('message', '')}",
-                code=resp_code,
-                endpoint=VERIFY_CONTROL_PASSWORD_ENDPOINT,
-            )
-        if resp_code in CONTROL_PASSWORD_ERROR_CODES:
-            raise BydControlPasswordError(
-                f"{VERIFY_CONTROL_PASSWORD_ENDPOINT} failed: code={resp_code} message={response.get('message', '')}",
-                code=resp_code,
-                endpoint=VERIFY_CONTROL_PASSWORD_ENDPOINT,
-            )
-        if resp_code in ENDPOINT_NOT_SUPPORTED_CODES:
-            raise BydEndpointNotSupportedError(
-                f"{VERIFY_CONTROL_PASSWORD_ENDPOINT} failed: code={resp_code} message={response.get('message', '')}",
-                code=resp_code,
-                endpoint=VERIFY_CONTROL_PASSWORD_ENDPOINT,
-            )
-        raise BydApiError(
-            f"{VERIFY_CONTROL_PASSWORD_ENDPOINT} failed: code={resp_code} message={response.get('message', '')}",
-            code=resp_code,
-            endpoint=VERIFY_CONTROL_PASSWORD_ENDPOINT,
-        )
-
-    encrypted_inner = response.get("respondData")
-    if not encrypted_inner:
-        return VerifyControlPasswordResponse(vin=vin, ok=None, raw={})
-    decrypted_inner = aes_decrypt_utf8(encrypted_inner, content_key)
-    if not decrypted_inner or not decrypted_inner.strip():
-        return VerifyControlPasswordResponse(vin=vin, ok=None, raw={})
-
-    try:
-        parsed = json.loads(decrypted_inner)
-        if not isinstance(parsed, dict):
-            raise BydControlPasswordError(
-                (
-                    f"{VERIFY_CONTROL_PASSWORD_ENDPOINT} failed: "
-                    "unexpected decrypted payload shape (invalid control PIN or cloud control locked)"
-                ),
-                code="5005",
-                endpoint=VERIFY_CONTROL_PASSWORD_ENDPOINT,
-            )
-
-        raw: dict[str, Any] = parsed
-        ok_value = raw.get("ok")
-        ok = ok_value if isinstance(ok_value, bool) else None
-        return VerifyControlPasswordResponse(vin=vin, ok=ok, raw=raw)
-    except json.JSONDecodeError as exc:
-        raise BydControlPasswordError(
-            (
-                f"{VERIFY_CONTROL_PASSWORD_ENDPOINT} failed: "
-                "invalid decrypted payload (invalid control PIN or cloud control locked)"
-            ),
-            code="5005",
-            endpoint=VERIFY_CONTROL_PASSWORD_ENDPOINT,
-        ) from exc
+    raw = data if isinstance(data, dict) else {}
+    _logger.debug(
+        "Verify control password response decoded vin=%s keys=%s",
+        vin,
+        list(raw.keys()),
+    )
+    return VerifyControlPasswordResponse.model_validate({"vin": vin, **raw, "raw": raw})
 
 
 def _is_remote_control_ready(data: dict[str, Any]) -> bool:
@@ -205,15 +140,9 @@ def _is_remote_control_ready(data: dict[str, Any]) -> bool:
     return "result" in data
 
 
-def _parse_control_result(data: dict[str, Any]) -> RemoteControlResult:
-    """Parse raw remote control dict into a typed model."""
-
-    return RemoteControlResult.model_validate(data)
-
-
 def parse_remote_control_result_data(data: dict[str, Any]) -> RemoteControlResult:
     """Parse raw remote-control result payload into a typed model."""
-    return _parse_control_result(data)
+    return RemoteControlResult.model_validate(data)
 
 
 async def _fetch_control_endpoint(
@@ -229,53 +158,28 @@ async def _fetch_control_endpoint(
     request_serial: str | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     """Fetch a single control endpoint, returning (result_dict, next_serial)."""
-    now_ms = int(time.time() * 1000)
     inner = _build_control_inner(
         config,
         vin,
         command,
-        now_ms,
         control_params=control_params,
         command_pwd=command_pwd,
         request_serial=request_serial,
     )
-    outer, content_key = build_token_outer_envelope(config, session, inner, now_ms)
 
-    response = await transport.post_secure(endpoint, outer)
+    # Build extra code map: for remote control endpoints, include service errors.
+    extra = _REMOTE_CONTROL_EXTRA_CODES if endpoint in REMOTE_CONTROL_ENDPOINTS else _CONTROL_EXTRA_CODES
+    result = await post_token_json(
+        endpoint=endpoint,
+        config=config,
+        session=session,
+        transport=transport,
+        inner=inner,
+        vin=vin,
+        not_supported_codes=ENDPOINT_NOT_SUPPORTED_CODES,
+        extra_code_map=extra,
+    )
 
-    resp_code = str(response.get("code", ""))
-    if resp_code != "0":
-        if resp_code in SESSION_EXPIRED_CODES:
-            raise BydSessionExpiredError(
-                f"{endpoint} failed: code={resp_code} message={response.get('message', '')}",
-                code=resp_code,
-                endpoint=endpoint,
-            )
-        if resp_code in CONTROL_PASSWORD_ERROR_CODES:
-            raise BydControlPasswordError(
-                f"{endpoint} failed: code={resp_code} message={response.get('message', '')}",
-                code=resp_code,
-                endpoint=endpoint,
-            )
-        if resp_code in ENDPOINT_NOT_SUPPORTED_CODES:
-            raise BydEndpointNotSupportedError(
-                f"{endpoint} failed: code={resp_code} message={response.get('message', '')}",
-                code=resp_code,
-                endpoint=endpoint,
-            )
-        if endpoint in REMOTE_CONTROL_ENDPOINTS and resp_code in REMOTE_CONTROL_SERVICE_ERROR_CODES:
-            raise BydRemoteControlError(
-                f"{endpoint} failed: code={resp_code} message={response.get('message', '')}",
-                code=resp_code,
-                endpoint=endpoint,
-            )
-        raise BydApiError(
-            f"{endpoint} failed: code={resp_code} message={response.get('message', '')}",
-            code=resp_code,
-            endpoint=endpoint,
-        )
-
-    result = json.loads(aes_decrypt_utf8(response["respondData"], content_key))
     next_serial = (result.get("requestSerial") if isinstance(result, dict) else None) or request_serial
 
     return result, next_serial
@@ -438,7 +342,7 @@ async def _poll_remote_control_once(
     )
 
     if isinstance(result, dict) and _is_remote_control_ready(result):
-        parsed = _parse_control_result(result)
+        parsed = parse_remote_control_result_data(result)
         if parsed.control_state == 2:
             msg = result.get("message") or result.get("msg") or "controlState=2"
             raise BydRemoteControlError(
@@ -450,7 +354,7 @@ async def _poll_remote_control_once(
 
     if not serial:
         _logger.debug("Remote control %s request returned without serial; using immediate result", command.name)
-        return _parse_control_result(result if isinstance(result, dict) else {})
+        return parse_remote_control_result_data(result if isinstance(result, dict) else {})
 
     if mqtt_result_waiter is not None:
         try:
@@ -502,7 +406,7 @@ async def _poll_remote_control_once(
                 exc_info=True,
             )
 
-    parsed = _parse_control_result(latest if isinstance(latest, dict) else {})
+    parsed = parse_remote_control_result_data(latest if isinstance(latest, dict) else {})
     _logger.debug(
         "Remote control %s final parsed result success=%s state=%s",
         command.name,

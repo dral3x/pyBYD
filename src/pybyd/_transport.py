@@ -1,10 +1,9 @@
-"""HTTP transport with Bangcle envelope wrapping and cookie management."""
+"""HTTP transport with Bangcle envelope wrapping."""
 
 from __future__ import annotations
 
 import json
 import logging
-from http.cookies import SimpleCookie
 from collections.abc import Mapping
 from typing import Any, Protocol
 
@@ -25,12 +24,16 @@ class Transport(Protocol):
     keeping the production implementation (`SecureTransport`) concrete.
     """
 
-    async def post_secure(self, endpoint: str, outer_payload: Mapping[str, Any]) -> dict[str, Any]:
-        ...
+    async def post_secure(self, endpoint: str, outer_payload: Mapping[str, Any]) -> dict[str, Any]: ...
 
 
 class SecureTransport:
-    """HTTP transport that handles Bangcle envelope encoding and cookie persistence."""
+    """HTTP transport that handles Bangcle envelope encoding.
+
+    Cookie persistence is delegated to the ``aiohttp.ClientSession``'s
+    built-in ``CookieJar`` — callers should create the session with
+    ``cookie_jar=aiohttp.CookieJar(unsafe=True)`` for single-host APIs.
+    """
 
     def __init__(
         self,
@@ -41,28 +44,6 @@ class SecureTransport:
         self._config = config
         self._codec = codec
         self._http = http_session
-        self._cookies: dict[str, str] = {}
-        self._cookie_header: str = ""
-
-    def _update_cookies(self, headers: Any) -> None:
-        """Extract Set-Cookie headers and store them."""
-        raw_cookies = headers.getall("Set-Cookie", [])
-        changed = False
-        for raw in raw_cookies:
-            cookie: SimpleCookie = SimpleCookie()
-            cookie.load(raw)
-            for key, morsel in cookie.items():
-                value = morsel.value
-                if self._cookies.get(key) != value:
-                    self._cookies[key] = value
-                    changed = True
-
-        if changed:
-            self._cookie_header = "; ".join(f"{k}={v}" for k, v in self._cookies.items())
-
-    def _build_cookie_header(self) -> str:
-        """Build a Cookie header string from stored cookies."""
-        return self._cookie_header
 
     async def post_secure(self, endpoint: str, outer_payload: Mapping[str, Any]) -> dict[str, Any]:
         """Send a signed request through the Bangcle envelope layer.
@@ -81,10 +62,6 @@ class SecureTransport:
             "user-agent": USER_AGENT,
         }
 
-        cookie = self._build_cookie_header()
-        if cookie:
-            headers["cookie"] = cookie
-
         url = f"{self._config.base_url}{endpoint}"
         body = json.dumps({"request": encoded})
 
@@ -92,7 +69,6 @@ class SecureTransport:
 
         try:
             async with self._http.post(url, data=body, headers=headers) as resp:
-                self._update_cookies(resp.headers)
                 text = await resp.text()
                 if resp.status != 200:
                     raise BydTransportError(

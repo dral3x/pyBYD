@@ -2,34 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import ClassVar
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, model_validator
 
 from pybyd.models._base import BydBaseModel, BydTimestamp
-
-# BYD sometimes sends "childList" instead of "children".
-_KEY_ALIASES: dict[str, str] = {
-    "childList": "children",
-}
 
 
 class EmpowerRange(BydBaseModel):
     """A permission scope granted to a shared user."""
 
+    # BYD sometimes sends "childList" instead of "children".
+    _KEY_ALIASES: ClassVar[dict[str, str]] = {
+        "childList": "children",
+    }
+
     code: str = ""
     name: str = ""
     children: list[EmpowerRange] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalise_keys(cls, values: Any) -> Any:
-        if not isinstance(values, dict):
-            return values
-        normalised: dict[str, Any] = {}
-        for k, v in values.items():
-            normalised[_KEY_ALIASES.get(k, k)] = v
-        return normalised
 
 
 class Vehicle(BydBaseModel):
@@ -65,16 +55,10 @@ class Vehicle(BydBaseModel):
     def _fill_missing_pics(self) -> Vehicle:
         if self.pic_main_url and self.pic_set_url:
             return self
-        nested = self.raw.get("cfPic")
+        raw = self.raw if isinstance(self.raw, dict) else {}
+        nested = raw.get("cfPic")
         if not isinstance(nested, dict):
             return self
         pic_main = self.pic_main_url or str(nested.get("picMainUrl") or nested.get("pic_main_url") or "")
         pic_set = self.pic_set_url or str(nested.get("picSetUrl") or nested.get("pic_set_url") or "")
         return self.model_copy(update={"pic_main_url": pic_main, "pic_set_url": pic_set})
-
-    @field_validator("default_car", mode="before")
-    @classmethod
-    def _coerce_default_car(cls, value: Any) -> bool:
-        if isinstance(value, bool):
-            return value
-        return int(value) == 1

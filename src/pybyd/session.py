@@ -50,15 +50,30 @@ class Session(BaseModel):
         """AES key for encrypting/decrypting inner payload data.
 
         Derived as ``MD5(encry_token)`` in uppercase hex.
+        Cached because the frozen model guarantees the token never changes.
         """
-        return md5_hex(self.encry_token)
+        # Use a simple cache attribute to avoid recomputing on every call.
+        # Cannot use @functools.cached_property on a frozen Pydantic model
+        # directly, so we stash it via object.__setattr__.
+        try:
+            return str(object.__getattribute__(self, "_content_key_cache"))
+        except AttributeError:
+            value = md5_hex(self.encry_token)
+            object.__setattr__(self, "_content_key_cache", value)
+            return value
 
     def sign_key(self) -> str:
         """Key used in request signature computation.
 
         Derived as ``MD5(sign_token)`` in uppercase hex.
+        Cached because the frozen model guarantees the token never changes.
         """
-        return md5_hex(self.sign_token)
+        try:
+            return str(object.__getattribute__(self, "_sign_key_cache"))
+        except AttributeError:
+            value = md5_hex(self.sign_token)
+            object.__setattr__(self, "_sign_key_cache", value)
+            return value
 
     @property
     def is_expired(self) -> bool:

@@ -4,7 +4,7 @@ import dataclasses
 import enum
 import json
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -260,9 +260,7 @@ class EvidenceCollector:
             field = f"{entry['endpoint']} / {entry['section']} / {entry['path']}"
             count = entry["count"]
             hits: list[dict[str, Any]] = entry["hits"]
-            examples = ", ".join(
-                f"{h['step_id']}:{h['step_title']}" for h in hits[:max_examples_per_field]
-            )
+            examples = ", ".join(f"{h['step_id']}:{h['step_title']}" for h in hits[:max_examples_per_field])
             if len(hits) > max_examples_per_field:
                 examples += f" (+{len(hits) - max_examples_per_field} more)"
             lines.append(f"| {field} | {count} | {examples} |")

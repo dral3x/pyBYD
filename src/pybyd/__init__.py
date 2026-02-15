@@ -19,6 +19,7 @@ from pybyd.exceptions import (
     BydTransportError,
 )
 from pybyd.models import (
+    VALID_CLIMATE_DURATIONS,
     AirCirculationMode,
     AuthToken,
     BatteryHeatParams,
@@ -41,12 +42,14 @@ from pybyd.models import (
     SeatClimateParams,
     SeatHeatVentState,
     SmartChargingSchedule,
+    StearingWheelHeat,
     TirePressureUnit,
     Vehicle,
     VehicleRealtimeData,
     VehicleState,
     VerifyControlPasswordResponse,
     WindowState,
+    minutes_to_time_span,
 )
 
 try:
@@ -93,10 +96,13 @@ __all__ = [
     "SeatClimateParams",
     "SeatHeatVentState",
     "SmartChargingSchedule",
+    "StearingWheelHeat",
     "TirePressureUnit",
+    "VALID_CLIMATE_DURATIONS",
     "Vehicle",
     "VehicleRealtimeData",
     "VehicleState",
     "VerifyControlPasswordResponse",
     "WindowState",
+    "minutes_to_time_span",
 ]

@@ -5,9 +5,10 @@ Enum values and field meanings are documented in API_MAPPING.md.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, ClassVar
 
-from pybyd.models._base import BydBaseModel, BydEnum, BydTimestamp
+from pybyd.models._base import COMMON_KEY_ALIASES, BydBaseModel, BydEnum, BydTimestamp, is_negative, is_temp_sentinel
 
 # ------------------------------------------------------------------
 # Enums
@@ -54,59 +55,80 @@ class ChargingState(BydEnum):
     """Charging state indicator.
 
     Used for both ``charging_state`` and ``charge_state`` fields.
+    BYD SDK (section 6.14) documents charging mode, gun connection,
+    and charger status as separate fields.
     ``0`` means connected but not actively charging.
     ``15`` means the charge gun is plugged in but not charging.
     """
 
     UNKNOWN = -1
-    NOT_CHARGING = 0
-    CHARGING = 1
-    GUN_CONNECTED = 15
+    NOT_CHARGING = 0  # confirmed
+    CHARGING = 1  # confirmed on chargeState field
+    GUN_CONNECTED = 15  # confirmed; gun plugged in, not charging
 
 
 class TirePressureUnit(BydEnum):
-    """Unit used for tire pressure readings."""
+    """Unit used for tire pressure readings.
+
+    BYD SDK ``getUnit()`` (section 6.16.4) defines
+    temperature, pressure, fuel, distance, and power units.
+    """
 
     UNKNOWN = -1
-    BAR = 1
-    PSI = 2
-    KPA = 3
+    BAR = 1  # confirmed
+    PSI = 2  # assumed from BYD SDK
+    KPA = 3  # assumed from BYD SDK
 
 
 class DoorOpenState(BydEnum):
-    """Door/trunk open/closed state."""
+    """Door/trunk open/closed state.
+
+    BYD SDK ``getDoorState()`` (section 6.1.5) defines
+    BODYWORK_STATE_CLOSED and BODYWORK_STATE_OPEN.
+    """
 
     UNKNOWN = -1
-    CLOSED = 0
-    OPEN = 1
+    CLOSED = 0  # confirmed; BYD SDK: BODYWORK_STATE_CLOSED
+    OPEN = 1  # assumed from BYD SDK: BODYWORK_STATE_OPEN
 
 
 class LockState(BydEnum):
-    """Door lock state."""
+    """Door lock state.
+
+    BYD SDK ``getDoorLockState()`` (section 6.10.2).
+    Cloud API uses 1=unlocked, 2=locked (confirmed).
+    """
 
     UNKNOWN = -1
-    UNLOCKED = 1
-    LOCKED = 2
+    UNLOCKED = 1  # confirmed
+    LOCKED = 2  # confirmed
 
 
 class WindowState(BydEnum):
-    """Window open/closed state."""
+    """Window open/closed state.
+
+    BYD SDK ``getWindowState()`` (section 6.1.6) defines
+    BODYWORK_STATE_CLOSED and BODYWORK_STATE_OPEN.
+    Cloud API uses 1=closed, 2=open (note: differs from door encoding).
+    """
 
     UNKNOWN = -1
-    CLOSED = 1
-    OPEN = 2
+    CLOSED = 1  # confirmed
+    OPEN = 2  # assumed from BYD SDK: BODYWORK_STATE_OPEN
 
 
 class PowerGear(BydEnum):
     """Transmission gear position.
 
+    BYD SDK ``getPowerLevel()`` (section 6.1.9) defines OFF=0, ACC=1, ON=2
+    but cloud API uses different codes: 1=parked, 3=drive (confirmed).
     Known values from observations.  Unknown values fall back to
     ``UNKNOWN`` via ``BydEnum._missing_``.
     """
 
     UNKNOWN = -1
-    PARKED = 1
-    DRIVE = 3
+    PARKED = 1  # confirmed
+    DRIVE = 3  # confirmed
 
 
 class StearingWheelHeat(BydEnum):
@@ -122,6 +144,7 @@ class StearingWheelHeat(BydEnum):
     OFF = 0
     ON = 1
 
+
 class SeatHeatVentState(BydEnum):
     """Seat heating / ventilation / steering wheel heat level.
 
@@ -135,18 +158,33 @@ class SeatHeatVentState(BydEnum):
     """
 
     UNKNOWN = -1
-    OFF = 0
+    AVAILABLE = 0  # dont have the feature ??
+    OFF = 1  # we have the feature but it's currently off
     LOW = 2
     HIGH = 3
 
+    def to_command_level(self) -> int:
+        """Return the value to send in a ``set_seat_climate()`` command.
+
+        Status and command share the same integer scale, so this is
+        the identity for valid states (``OFF = 1``, ``LOW = 2``,
+        ``HIGH = 3``).  ``AVAILABLE`` (0) and ``UNKNOWN`` (−1) both
+        map to ``0`` (not applicable / feature absent).
+        """
+        return max(0, self.value)
+
 
 class AirCirculationMode(BydEnum):
-    """Air circulation mode."""
+    """Air circulation mode.
+
+    BYD SDK ``getAcCycleMode()`` (section 6.6.8) defines
+    internal (``AC_CYCLEMODE_INLOOP``) and external (``AC_CYCLEMODE_OUTLOOP``).
+    """
 
     UNKNOWN = -1
-    EXTERNAL = 0
-    INTERNAL = 1
-    OUTSIDE_FRESH_2 = 2
+    UNAVAILABLE = 0
+    INTERNAL = 1  # assumed from BYD SDK: AC_CYCLEMODE_INLOOP
+    EXTERNAL = 2  # assumed from BYD SDK: AC_CYCLEMODE_OUTLOOP
 
 
 # ------------------------------------------------------------------
@@ -154,6 +192,7 @@ class AirCirculationMode(BydEnum):
 # ------------------------------------------------------------------
 
 _KEY_ALIASES: dict[str, str] = {
+    **COMMON_KEY_ALIASES,
     "backCover": "trunkLid",
     "leftFrontTirepressure": "leftFrontTirePressure",
     "rightFrontTirepressure": "rightFrontTirePressure",
@@ -174,6 +213,14 @@ class VehicleRealtimeData(BydBaseModel):
     """
 
     _KEY_ALIASES: ClassVar[dict[str, str]] = _KEY_ALIASES
+
+    _SENTINEL_RULES: ClassVar[dict[str, Callable[..., bool]]] = {
+        "temp_in_car": is_temp_sentinel,
+        "full_hour": is_negative,
+        "full_minute": is_negative,
+        "remaining_hours": is_negative,
+        "remaining_minutes": is_negative,
+    }
 
     # --- Connection & state ---
     online_state: OnlineState = OnlineState.UNKNOWN
@@ -214,7 +261,8 @@ class VehicleRealtimeData(BydBaseModel):
     main_setting_temp_new: float | None = None
     """Driver-side set temperature (°C, precise)."""
     air_run_state: AirCirculationMode | None = None
-    """Air circulation mode (0=external, 1=internal)."""
+    """Air circulation mode (0=unavailable, 1=internal, 2=external).
+    BYD SDK ``getAcCycleMode()`` (section 6.6.8): INLOOP / OUTLOOP."""
 
     # --- Seat heating/ventilation ---
     main_seat_heat_state: SeatHeatVentState | None = None
@@ -293,11 +341,14 @@ class VehicleRealtimeData(BydBaseModel):
     left_rear_tire_status: int | None = None
     right_rear_tire_status: int | None = None
     tire_press_unit: TirePressureUnit | None = None
-    """1=bar, 2=psi, 3=kPa."""
+    """1=bar, 2=psi, 3=kPa.
+    BYD SDK ``getUnit()`` (section 6.16.4) confirms pressure unit codes."""
     tirepressure_system: int | None = None
-    """Tire pressure monitoring system state."""
+    """Tire pressure monitoring system state.
+    BYD SDK ``getTirePressureSystemStatus()`` (section 6.15.7)."""
     rapid_tire_leak: int | None = None
-    """Rapid tire leak detected (0=no)."""
+    """Rapid tire leak detected (0=no).
+    BYD SDK ``getTireLeakageStatus()`` (section 6.15.2)."""
 
     # --- Energy consumption ---
     total_power: float | None = None
@@ -322,7 +373,8 @@ class VehicleRealtimeData(BydBaseModel):
     power_system: int | None = None
     engine_status: int | None = None
     epb: int | None = None
-    """Electronic parking brake."""
+    """Electronic parking brake.
+    BYD SDK ``getParkBrakeSwitchState()`` (section 6.9.7): 0=released, 1=engaged."""
     eps: int | None = None
     """Electric power steering warning."""
     esp: int | None = None
@@ -334,7 +386,8 @@ class VehicleRealtimeData(BydBaseModel):
     srs: int | None = None
     """Supplemental restraint system (airbag) warning."""
     ect: int | None = None
-    """Engine coolant temperature warning."""
+    """Engine coolant temperature warning.
+    BYD SDK ``getCoolantLevel()`` (section 6.8.6)."""
     ect_value: int | None = None
     """Engine coolant temperature value."""
     pwr: int | None = None
@@ -398,9 +451,24 @@ class VehicleRealtimeData(BydBaseModel):
         return self.charging_state > 0 and self.charging_state != ChargingState.GUN_CONNECTED
 
     @property
+    def time_to_full_minutes(self) -> int | None:
+        """Total estimated minutes until fully charged.
+
+        Combines ``full_hour`` and ``full_minute`` into a single value.
+        Returns ``None`` when either component is unavailable.
+        """
+        if self.full_hour is None or self.full_minute is None:
+            return None
+        return self.full_hour * 60 + self.full_minute
+
+    @property
     def interior_temp_available(self) -> bool:
-        """Whether interior temperature reading is valid (not sentinel)."""
-        return self.temp_in_car is not None and self.temp_in_car != -129.0
+        """Whether interior temperature reading is valid.
+
+        After sentinel normalisation ``temp_in_car`` is ``None`` when
+        the BYD API returned ``-129``, so a simple ``is not None`` suffices.
+        """
+        return self.temp_in_car is not None
 
     @property
     def is_locked(self) -> bool:
@@ -439,3 +507,28 @@ class VehicleRealtimeData(BydBaseModel):
             self.skylight,
         ]
         return any(w == WindowState.OPEN for w in windows if w is not None)
+
+    @property
+    def is_vehicle_on(self) -> bool:
+        """Whether the vehicle is powered on."""
+        return self.vehicle_state == VehicleState.ON
+
+    @property
+    def is_battery_heating(self) -> bool | None:
+        """Whether the battery heating system is active.
+
+        Returns ``None`` when the state is unknown.
+        """
+        if self.battery_heat_state is None:
+            return None
+        return bool(self.battery_heat_state)
+
+    @property
+    def is_steering_wheel_heating(self) -> bool | None:
+        """Whether steering wheel heating is active.
+
+        Returns ``None`` when the state is unknown.
+        """
+        if self.steering_wheel_heat_state is None:
+            return None
+        return self.steering_wheel_heat_state == StearingWheelHeat.ON

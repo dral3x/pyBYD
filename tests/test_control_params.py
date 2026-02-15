@@ -60,7 +60,6 @@ def test_build_control_inner_serializes_control_params_map_as_json_string() -> N
         config,
         vin="TESTVIN",
         command=RemoteCommand.START_CLIMATE,
-        now_ms=1700000000000,
         control_params={"mainSettingTemp": 7, "timeSpan": 1},
         command_pwd="ABCDEF",
     )

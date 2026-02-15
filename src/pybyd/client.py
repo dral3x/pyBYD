@@ -20,8 +20,8 @@ from pybyd._api import hvac as _hvac_api
 from pybyd._api import push_notifications as _push_api
 from pybyd._api import realtime as _realtime_api
 from pybyd._api import smart_charging as _smart_api
+from pybyd._api import vehicle as _vehicle_api
 from pybyd._api import vehicle_settings as _settings_api
-from pybyd._api._common import fetch_vehicle_list
 from pybyd._api.login import build_login_request, parse_login_response
 from pybyd._crypto.bangcle import BangcleCodec
 from pybyd._crypto.hashing import md5_hex
@@ -29,6 +29,7 @@ from pybyd._mqtt import BydMqttRuntime, MqttEvent, fetch_mqtt_bootstrap
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
 from pybyd.exceptions import BydError, BydSessionExpiredError
+from pybyd.models._base import BydBaseModel
 from pybyd.models.charging import ChargingStatus
 from pybyd.models.control import (
     BatteryHeatParams,
@@ -53,6 +54,7 @@ from pybyd.session import Session
 _logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+_M = TypeVar("_M", bound=BydBaseModel)
 
 
 @dataclass(slots=True)
@@ -116,7 +118,9 @@ class BydClient:
     async def __aenter__(self) -> BydClient:
         self._loop = asyncio.get_running_loop()
         if self._http_session is None:
-            self._http_session = aiohttp.ClientSession()
+            self._http_session = aiohttp.ClientSession(
+                cookie_jar=aiohttp.CookieJar(unsafe=True),
+            )
         self._transport = SecureTransport(
             self._config,
             self._codec,
@@ -202,8 +206,28 @@ class BydClient:
             await self.ensure_session()
             return await fn()
 
+    async def _authed_call(
+        self,
+        fn: Callable[..., Awaitable[T]],
+        *args: Any,
+        **kwargs: Any,
+    ) -> T:
+        """Run *fn(config, session, transport, \\*args, \\*\\*kwargs)* with auto re-auth.
+
+        Most simple endpoints follow an identical pattern: acquire session
+        and transport, call an API function, retry on session expiry.
+        This helper eliminates the per-method inner closure boilerplate.
+        """
+
+        async def _call() -> T:
+            session = await self.ensure_session()
+            transport = self._require_transport()
+            return await fn(self._config, session, transport, *args, **kwargs)
+
+        return await self._call_with_reauth(_call)
+
     # ------------------------------------------------------------------
-    # MQTT (inline — replaces the deleted MqttCoordinator)
+    # MQTT
     # ------------------------------------------------------------------
 
     async def _ensure_mqtt_started(self) -> None:
@@ -378,15 +402,94 @@ class BydClient:
     # Read endpoints
     # ------------------------------------------------------------------
 
+    async def _trigger_and_poll(
+        self,
+        *,
+        vin: str,
+        trigger_endpoint: str,
+        poll_endpoint: str,
+        fetch_fn: Callable[..., Awaitable[tuple[dict[str, Any], str | None]]],
+        is_ready: Callable[[dict[str, Any]], bool],
+        model_cls: type[_M],
+        label: str,
+        mqtt_event_type: str | None = None,
+        mqtt_timeout: float | None = None,
+        poll_attempts: int = 10,
+        poll_interval: float = 1.5,
+    ) -> _M:
+        """Generic trigger → MQTT wait → HTTP poll fallback.
+
+        Parameters
+        ----------
+        fetch_fn
+            Async callable with signature
+            ``(endpoint, config, session, transport, vin, serial?) -> (dict, serial)``.
+        is_ready
+            Predicate that returns ``True`` when the raw dict has useful data.
+        model_cls
+            Pydantic model to ``model_validate`` the final dict.
+        label
+            Human-readable label for debug logging (e.g. ``"Realtime"``).
+        """
+        session = await self.ensure_session()
+        transport = self._require_transport()
+
+        # Phase 1: Trigger
+        trigger_info, serial = await fetch_fn(
+            trigger_endpoint,
+            self._config,
+            session,
+            transport,
+            vin,
+        )
+        merged_latest = trigger_info if isinstance(trigger_info, dict) else {}
+
+        if isinstance(trigger_info, dict) and is_ready(trigger_info):
+            return model_cls.model_validate(merged_latest)
+
+        if not serial:
+            return model_cls.model_validate(merged_latest)
+
+        # Phase 2: MQTT wait (preferred)
+        mqtt_raw = await self._mqtt_wait(
+            vin,
+            event_type=mqtt_event_type,
+            serial=serial,
+            timeout=mqtt_timeout,
+        )
+        if isinstance(mqtt_raw, dict) and is_ready(mqtt_raw):
+            _logger.debug("%s data received via MQTT for vin=%s", label, vin)
+            return model_cls.model_validate(mqtt_raw)
+
+        # Phase 3: HTTP poll fallback
+        _logger.debug("MQTT timeout; falling back to HTTP polling for %s vin=%s", label, vin)
+        for attempt in range(1, poll_attempts + 1):
+            if poll_interval > 0:
+                await asyncio.sleep(poll_interval)
+            try:
+                latest, serial = await fetch_fn(
+                    poll_endpoint,
+                    self._config,
+                    session,
+                    transport,
+                    vin,
+                    serial,
+                )
+                if isinstance(latest, dict):
+                    merged_latest = latest
+                if isinstance(latest, dict) and is_ready(latest):
+                    _logger.debug("%s ready via HTTP vin=%s attempt=%d", label, vin, attempt)
+                    break
+            except BydSessionExpiredError:
+                raise
+            except Exception:
+                _logger.debug("%s poll attempt=%d failed", label, attempt, exc_info=True)
+
+        return model_cls.model_validate(merged_latest)
+
     async def get_vehicles(self) -> list[Vehicle]:
         """Fetch all vehicles associated with the account."""
-
-        async def _call() -> list[Vehicle]:
-            session = await self.ensure_session()
-            transport = self._require_transport()
-            return await fetch_vehicle_list(self._config, session, transport)
-
-        return await self._call_with_reauth(_call)
+        return await self._authed_call(_vehicle_api.fetch_vehicle_list)
 
     async def get_vehicle_realtime(
         self,
@@ -404,56 +507,19 @@ class BydClient:
         """
 
         async def _call() -> VehicleRealtimeData:
-            session = await self.ensure_session()
-            transport = self._require_transport()
-
-            # Phase 1: Trigger
-            trigger_info, serial = await _realtime_api._fetch_realtime_endpoint(
-                "/vehicleInfo/vehicle/vehicleRealTimeRequest",
-                self._config,
-                session,
-                transport,
-                vin,
+            return await self._trigger_and_poll(
+                vin=vin,
+                trigger_endpoint="/vehicleInfo/vehicle/vehicleRealTimeRequest",
+                poll_endpoint="/vehicleInfo/vehicle/vehicleRealTimeResult",
+                fetch_fn=_realtime_api.fetch_realtime_endpoint,
+                is_ready=VehicleRealtimeData.is_ready_raw,
+                model_cls=VehicleRealtimeData,
+                label="Realtime",
+                mqtt_event_type="vehicleInfo",
+                mqtt_timeout=mqtt_timeout,
+                poll_attempts=poll_attempts,
+                poll_interval=poll_interval,
             )
-            merged_latest = trigger_info if isinstance(trigger_info, dict) else {}
-
-            if isinstance(trigger_info, dict) and VehicleRealtimeData.is_ready_raw(trigger_info):
-                return VehicleRealtimeData.model_validate(merged_latest)
-
-            if not serial:
-                return VehicleRealtimeData.model_validate(merged_latest)
-
-            # Phase 2: MQTT wait (preferred)
-            mqtt_raw = await self._mqtt_wait(vin, event_type="vehicleInfo", serial=serial, timeout=mqtt_timeout)
-            if isinstance(mqtt_raw, dict) and mqtt_raw:
-                _logger.debug("Realtime data received via MQTT for vin=%s", vin)
-                return VehicleRealtimeData.model_validate(mqtt_raw)
-
-            # Phase 3: HTTP poll fallback
-            _logger.debug("MQTT timeout; falling back to HTTP polling for vin=%s", vin)
-            for attempt in range(1, poll_attempts + 1):
-                if poll_interval > 0:
-                    await asyncio.sleep(poll_interval)
-                try:
-                    latest, serial = await _realtime_api._fetch_realtime_endpoint(
-                        "/vehicleInfo/vehicle/vehicleRealTimeResult",
-                        self._config,
-                        session,
-                        transport,
-                        vin,
-                        serial,
-                    )
-                    if isinstance(latest, dict):
-                        merged_latest = latest
-                    if isinstance(latest, dict) and VehicleRealtimeData.is_ready_raw(latest):
-                        _logger.debug("Realtime ready via HTTP vin=%s attempt=%d", vin, attempt)
-                        break
-                except BydSessionExpiredError:
-                    raise
-                except Exception:
-                    _logger.debug("Realtime poll attempt=%d failed", attempt, exc_info=True)
-
-            return VehicleRealtimeData.model_validate(merged_latest)
 
         return await self._call_with_reauth(_call)
 
@@ -473,108 +539,40 @@ class BydClient:
         """
 
         async def _call() -> GpsInfo:
-            session = await self.ensure_session()
-            transport = self._require_transport()
-
-            # Phase 1: Trigger
-            trigger_info, serial = await _gps_api._fetch_gps_endpoint(
-                "/control/getGpsInfo",
-                self._config,
-                session,
-                transport,
-                vin,
+            return await self._trigger_and_poll(
+                vin=vin,
+                trigger_endpoint="/control/getGpsInfo",
+                poll_endpoint="/control/getGpsInfoResult",
+                fetch_fn=_gps_api.fetch_gps_endpoint,
+                is_ready=_gps_api.is_gps_info_ready,
+                model_cls=GpsInfo,
+                label="GPS",
+                mqtt_timeout=mqtt_timeout,
+                poll_attempts=poll_attempts,
+                poll_interval=poll_interval,
             )
-            merged_latest = trigger_info if isinstance(trigger_info, dict) else {}
-
-            if isinstance(trigger_info, dict) and _gps_api._is_gps_info_ready(trigger_info):
-                return GpsInfo.model_validate(merged_latest)
-
-            if not serial:
-                return GpsInfo.model_validate(merged_latest)
-
-            # Phase 2: MQTT wait (preferred — match by serial, any event)
-            mqtt_raw = await self._mqtt_wait(vin, serial=serial, timeout=mqtt_timeout)
-            if isinstance(mqtt_raw, dict) and _gps_api._is_gps_info_ready(mqtt_raw):
-                _logger.debug("GPS data received via MQTT for vin=%s", vin)
-                return GpsInfo.model_validate(mqtt_raw)
-
-            # Phase 3: HTTP poll fallback
-            _logger.debug("MQTT timeout; falling back to HTTP polling for GPS vin=%s", vin)
-            for attempt in range(1, poll_attempts + 1):
-                if poll_interval > 0:
-                    await asyncio.sleep(poll_interval)
-                try:
-                    latest, serial = await _gps_api._fetch_gps_endpoint(
-                        "/control/getGpsInfoResult",
-                        self._config,
-                        session,
-                        transport,
-                        vin,
-                        serial,
-                    )
-                    if isinstance(latest, dict):
-                        merged_latest = latest
-                    if isinstance(latest, dict) and _gps_api._is_gps_info_ready(latest):
-                        _logger.debug("GPS ready via HTTP vin=%s attempt=%d", vin, attempt)
-                        break
-                except BydSessionExpiredError:
-                    raise
-                except Exception:
-                    _logger.debug("GPS poll attempt=%d failed", attempt, exc_info=True)
-
-            return GpsInfo.model_validate(merged_latest)
 
         return await self._call_with_reauth(_call)
 
     async def get_hvac_status(self, vin: str) -> HvacStatus:
         """Fetch HVAC / climate status."""
-
-        async def _call() -> HvacStatus:
-            session = await self.ensure_session()
-            transport = self._require_transport()
-            return await _hvac_api.fetch_hvac_status(self._config, session, transport, vin)
-
-        return await self._call_with_reauth(_call)
+        return await self._authed_call(_hvac_api.fetch_hvac_status, vin)
 
     async def get_charging_status(self, vin: str) -> ChargingStatus:
         """Fetch charging status."""
-
-        async def _call() -> ChargingStatus:
-            session = await self.ensure_session()
-            transport = self._require_transport()
-            return await _charging_api.fetch_charging_status(self._config, session, transport, vin)
-
-        return await self._call_with_reauth(_call)
+        return await self._authed_call(_charging_api.fetch_charging_status, vin)
 
     async def get_energy_consumption(self, vin: str) -> EnergyConsumption:
         """Fetch energy consumption data."""
-
-        async def _call() -> EnergyConsumption:
-            session = await self.ensure_session()
-            transport = self._require_transport()
-            return await _energy_api.fetch_energy_consumption(self._config, session, transport, vin)
-
-        return await self._call_with_reauth(_call)
+        return await self._authed_call(_energy_api.fetch_energy_consumption, vin)
 
     async def get_push_state(self, vin: str) -> PushNotificationState:
         """Fetch push notification state."""
-
-        async def _call() -> PushNotificationState:
-            session = await self.ensure_session()
-            transport = self._require_transport()
-            return await _push_api.get_push_state(self._config, session, transport, vin)
-
-        return await self._call_with_reauth(_call)
+        return await self._authed_call(_push_api.fetch_push_state, vin)
 
     async def set_push_state(self, vin: str, *, enable: bool) -> CommandAck:
         """Enable or disable push notifications."""
-
-        async def _call() -> CommandAck:
-            session = await self.ensure_session()
-            transport = self._require_transport()
-            return await _push_api.set_push_state(self._config, session, transport, vin, enable=enable)
-
-        return await self._call_with_reauth(_call)
+        return await self._authed_call(_push_api.set_push_state, vin, enable=enable)
 
     # ------------------------------------------------------------------
     # Control commands
@@ -588,13 +586,7 @@ class BydClient:
     ) -> VerifyControlPasswordResponse:
         """Verify the remote control PIN."""
         pwd = self._require_command_pwd(command_pwd)
-
-        async def _call() -> VerifyControlPasswordResponse:
-            session = await self.ensure_session()
-            transport = self._require_transport()
-            return await _control_api.verify_control_password(self._config, session, transport, vin, pwd)
-
-        return await self._call_with_reauth(_call)
+        return await self._authed_call(_control_api.verify_control_password, vin, pwd)
 
     async def _remote_control(
         self,
@@ -804,20 +796,8 @@ class BydClient:
 
     async def toggle_smart_charging(self, vin: str, *, enable: bool) -> CommandAck:
         """Enable or disable smart charging."""
-
-        async def _call() -> CommandAck:
-            session = await self.ensure_session()
-            transport = self._require_transport()
-            return await _smart_api.toggle_smart_charging(self._config, session, transport, vin, enable=enable)
-
-        return await self._call_with_reauth(_call)
+        return await self._authed_call(_smart_api.toggle_smart_charging, vin, enable=enable)
 
     async def rename_vehicle(self, vin: str, *, name: str) -> CommandAck:
         """Rename a vehicle."""
-
-        async def _call() -> CommandAck:
-            session = await self.ensure_session()
-            transport = self._require_transport()
-            return await _settings_api.rename_vehicle(self._config, session, transport, vin, name=name)
-
-        return await self._call_with_reauth(_call)
+        return await self._authed_call(_settings_api.rename_vehicle, vin, name=name)

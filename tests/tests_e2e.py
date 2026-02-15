@@ -245,10 +245,6 @@ def e2e_backend(monkeypatch: pytest.MonkeyPatch) -> FakeBydBackend:
             "pybyd._api.energy",
             "pybyd._api.hvac",
             "pybyd._api.charging",
-            "pybyd._api.control",
-            "pybyd._api.smart_charging",
-            "pybyd._api.vehicle_settings",
-            "pybyd._api.push_notifications",
             "pybyd._mqtt",
         ],
     )
@@ -431,7 +427,7 @@ async def test_remote_control_1009_raises_remote_control_error(monkeypatch: pyte
     session = _make_session()
 
     monkeypatch.setattr(
-        "pybyd._api.control.build_token_outer_envelope",
+        "pybyd._api._common.build_token_outer_envelope",
         lambda *_args, **_kwargs: ({"encryData": "ignored"}, "dummy-key"),
     )
 
@@ -456,7 +452,7 @@ async def test_non_remote_endpoint_1009_stays_api_error(monkeypatch: pytest.Monk
     session = _make_session()
 
     monkeypatch.setattr(
-        "pybyd._api.control.build_token_outer_envelope",
+        "pybyd._api._common.build_token_outer_envelope",
         lambda *_args, **_kwargs: ({"encryData": "ignored"}, "dummy-key"),
     )
 
@@ -492,7 +488,7 @@ async def test_verify_control_password_accepts_empty_decrypted_payload(monkeypat
         ttl=3600,
     )
 
-    monkeypatch.setattr("pybyd._api.control.aes_decrypt_utf8", lambda _value, _key: "")
+    monkeypatch.setattr("pybyd._api._common.aes_decrypt_utf8", lambda _value, _key: "")
 
     result = await verify_control_password(
         cfg,
@@ -515,8 +511,8 @@ def test_session_expired_codes_include_1002() -> None:
     assert "1002" in SESSION_EXPIRED_CODES
 
 
-def test_realtime_negative_charge_times_are_kept() -> None:
-    """BYD sends -1 for charge times when not applicable — kept as-is."""
+def test_realtime_negative_charge_times_are_stripped() -> None:
+    """BYD sends -1 for charge times when not applicable — cleaned to None."""
     realtime = VehicleRealtimeData.model_validate(
         {
             "vin": "VIN123",
@@ -527,10 +523,10 @@ def test_realtime_negative_charge_times_are_kept() -> None:
         }
     )
 
-    assert realtime.full_hour == -1
-    assert realtime.full_minute == -1
-    assert realtime.remaining_hours == -1
-    assert realtime.remaining_minutes == -1
+    assert realtime.full_hour is None
+    assert realtime.full_minute is None
+    assert realtime.remaining_hours is None
+    assert realtime.remaining_minutes is None
 
 
 def test_realtime_vehicle_state_mapping_on_and_off() -> None:
@@ -623,7 +619,7 @@ def push_backend(monkeypatch: pytest.MonkeyPatch) -> FakePushNotificationsBacken
     _patch_common_client_monkeypatches(
         monkeypatch,
         backend=backend,
-        decrypt_targets=["pybyd._api.login", "pybyd._api.push_notifications", "pybyd._mqtt"],
+        decrypt_targets=["pybyd._api.login", "pybyd._api._common", "pybyd._mqtt"],
     )
     return backend
 
@@ -727,7 +723,7 @@ def smart_charging_backend(monkeypatch: pytest.MonkeyPatch) -> FakeSmartCharging
     _patch_common_client_monkeypatches(
         monkeypatch,
         backend=backend,
-        decrypt_targets=["pybyd._api.login", "pybyd._api.smart_charging", "pybyd._mqtt"],
+        decrypt_targets=["pybyd._api.login", "pybyd._api._common", "pybyd._mqtt"],
     )
     return backend
 
@@ -857,7 +853,7 @@ def vehicle_settings_backend(monkeypatch: pytest.MonkeyPatch) -> FakeVehicleSett
     _patch_common_client_monkeypatches(
         monkeypatch,
         backend=backend,
-        decrypt_targets=["pybyd._api.login", "pybyd._api.vehicle_settings", "pybyd._mqtt"],
+        decrypt_targets=["pybyd._api.login", "pybyd._api._common", "pybyd._mqtt"],
     )
     return backend
 

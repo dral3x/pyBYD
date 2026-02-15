@@ -6,7 +6,9 @@ from datetime import UTC, datetime
 
 import pytest
 
+from pybyd._constants import VALID_CLIMATE_DURATIONS, minutes_to_time_span
 from pybyd.models.charging import ChargingStatus
+from pybyd.models.control import SeatClimateParams
 from pybyd.models.energy import EnergyConsumption
 from pybyd.models.gps import GpsInfo
 from pybyd.models.hvac import HvacStatus
@@ -130,11 +132,11 @@ class TestVehicleRealtimeData:
         assert data.abs_warning == 0
         assert data.timestamp == datetime.fromtimestamp(1700000000, tz=UTC)
 
-    def test_negative_values_kept_as_is(self) -> None:
-        """BYD -1 is NOT stripped; it's a valid API value."""
+    def test_negative_charge_times_stripped(self) -> None:
+        """Negative charge-time fields are cleaned to None by _strip_sentinels_after."""
         data = VehicleRealtimeData.model_validate(self.SAMPLE_PAYLOAD)
-        assert data.full_hour == -1
-        assert data.full_minute == -1
+        assert data.full_hour is None
+        assert data.full_minute is None
 
     def test_remaining_hours(self) -> None:
         data = VehicleRealtimeData.model_validate(self.SAMPLE_PAYLOAD)
@@ -400,3 +402,242 @@ class TestPushNotificationState:
         data = PushNotificationState.model_validate({"vin": "TEST", "pushSwitch": "1"})
         assert data.push_switch == 1
         assert data.is_enabled is True
+
+
+# ------------------------------------------------------------------
+# Sentinel normalisation
+# ------------------------------------------------------------------
+
+
+class TestSentinelNormalisation:
+    """Verify that BYD API sentinel values are normalised to None."""
+
+    def test_realtime_temp_sentinel_normalised(self) -> None:
+        data = VehicleRealtimeData.model_validate({"tempInCar": -129})
+        assert data.temp_in_car is None
+        assert data.interior_temp_available is False
+
+    def test_realtime_temp_valid_preserved(self) -> None:
+        data = VehicleRealtimeData.model_validate({"tempInCar": 21.5})
+        assert data.temp_in_car == 21.5
+        assert data.interior_temp_available is True
+
+    def test_realtime_negative_charge_times(self) -> None:
+        data = VehicleRealtimeData.model_validate(
+            {"fullHour": -1, "fullMinute": -1, "remainingHours": -1, "remainingMinutes": -1}
+        )
+        assert data.full_hour is None
+        assert data.full_minute is None
+        assert data.remaining_hours is None
+        assert data.remaining_minutes is None
+
+    def test_realtime_positive_charge_times_kept(self) -> None:
+        data = VehicleRealtimeData.model_validate(
+            {"fullHour": 2, "fullMinute": 30, "remainingHours": 1, "remainingMinutes": 15}
+        )
+        assert data.full_hour == 2
+        assert data.full_minute == 30
+        assert data.remaining_hours == 1
+        assert data.remaining_minutes == 15
+
+    def test_hvac_temp_sentinel_normalised(self) -> None:
+        data = HvacStatus.model_validate({"statusNow": {"tempInCar": -129}})
+        assert data.temp_in_car is None
+        assert data.interior_temp_available is False
+
+    def test_hvac_temp_valid_preserved(self) -> None:
+        data = HvacStatus.model_validate({"statusNow": {"tempInCar": 22.0}})
+        assert data.temp_in_car == 22.0
+        assert data.interior_temp_available is True
+
+    def test_charging_negative_times_normalised(self) -> None:
+        data = ChargingStatus.model_validate({"fullHour": -1, "fullMinute": -1})
+        assert data.full_hour is None
+        assert data.full_minute is None
+        assert data.time_to_full_available is False
+
+    def test_charging_positive_times_kept(self) -> None:
+        data = ChargingStatus.model_validate({"fullHour": 1, "fullMinute": 30})
+        assert data.full_hour == 1
+        assert data.full_minute == 30
+        assert data.time_to_full_available is True
+
+
+# ------------------------------------------------------------------
+# time_to_full_minutes
+# ------------------------------------------------------------------
+
+
+class TestTimeToFullMinutes:
+    def test_realtime_time_to_full(self) -> None:
+        data = VehicleRealtimeData.model_validate({"fullHour": 2, "fullMinute": 30})
+        assert data.time_to_full_minutes == 150
+
+    def test_realtime_time_to_full_zero(self) -> None:
+        data = VehicleRealtimeData.model_validate({"fullHour": 0, "fullMinute": 0})
+        assert data.time_to_full_minutes == 0
+
+    def test_realtime_time_to_full_none_when_missing(self) -> None:
+        data = VehicleRealtimeData.model_validate({})
+        assert data.time_to_full_minutes is None
+
+    def test_realtime_time_to_full_none_when_sentinel(self) -> None:
+        data = VehicleRealtimeData.model_validate({"fullHour": -1, "fullMinute": -1})
+        assert data.time_to_full_minutes is None
+
+    def test_charging_time_to_full(self) -> None:
+        data = ChargingStatus.model_validate({"fullHour": 1, "fullMinute": 45})
+        assert data.time_to_full_minutes == 105
+
+    def test_charging_time_to_full_none_when_sentinel(self) -> None:
+        data = ChargingStatus.model_validate({"fullHour": -1, "fullMinute": 30})
+        assert data.time_to_full_minutes is None
+
+
+# ------------------------------------------------------------------
+# Convenience boolean properties
+# ------------------------------------------------------------------
+
+
+class TestConvenienceProperties:
+    def test_is_vehicle_on_true(self) -> None:
+        data = VehicleRealtimeData.model_validate({"vehicleState": 0})
+        assert data.is_vehicle_on is True
+
+    def test_is_vehicle_on_false(self) -> None:
+        data = VehicleRealtimeData.model_validate({"vehicleState": 2})
+        assert data.is_vehicle_on is False
+
+    def test_is_vehicle_on_unknown(self) -> None:
+        data = VehicleRealtimeData.model_validate({})
+        assert data.is_vehicle_on is False  # default UNKNOWN != ON
+
+    def test_is_battery_heating_on(self) -> None:
+        data = VehicleRealtimeData.model_validate({"batteryHeatState": 1})
+        assert data.is_battery_heating is True
+
+    def test_is_battery_heating_off(self) -> None:
+        data = VehicleRealtimeData.model_validate({"batteryHeatState": 0})
+        assert data.is_battery_heating is False
+
+    def test_is_battery_heating_none(self) -> None:
+        data = VehicleRealtimeData.model_validate({})
+        assert data.is_battery_heating is None
+
+    def test_is_steering_wheel_heating_on(self) -> None:
+        data = VehicleRealtimeData.model_validate({"steeringWheelHeatState": 1})
+        assert data.is_steering_wheel_heating is True
+
+    def test_is_steering_wheel_heating_off(self) -> None:
+        data = VehicleRealtimeData.model_validate({"steeringWheelHeatState": 0})
+        assert data.is_steering_wheel_heating is False
+
+    def test_is_steering_wheel_heating_none(self) -> None:
+        data = VehicleRealtimeData.model_validate({})
+        assert data.is_steering_wheel_heating is None
+
+    def test_hvac_is_steering_wheel_heating_on(self) -> None:
+        data = HvacStatus.model_validate({"statusNow": {"steeringWheelHeatState": 1}})
+        assert data.is_steering_wheel_heating is True
+
+    def test_hvac_is_steering_wheel_heating_off(self) -> None:
+        data = HvacStatus.model_validate({"statusNow": {"steeringWheelHeatState": 0}})
+        assert data.is_steering_wheel_heating is False
+
+    def test_steering_wheel_byd_typo_alias(self) -> None:
+        """BYD API sends 'stearingWheelHeatState' (typo); alias maps it."""
+        data = VehicleRealtimeData.model_validate({"stearingWheelHeatState": 1})
+        assert data.is_steering_wheel_heating is True
+
+    def test_hvac_steering_wheel_byd_typo_alias(self) -> None:
+        data = HvacStatus.model_validate({"statusNow": {"stearingWheelHeatState": 1}})
+        assert data.is_steering_wheel_heating is True
+
+
+# ------------------------------------------------------------------
+# SeatHeatVentState.to_command_level
+# ------------------------------------------------------------------
+
+
+class TestSeatHeatVentStateToCommandLevel:
+    def test_off_maps_to_one(self) -> None:
+        assert SeatHeatVentState.OFF.to_command_level() == 1
+
+    def test_low_maps_to_two(self) -> None:
+        assert SeatHeatVentState.LOW.to_command_level() == 2
+
+    def test_high_maps_to_three(self) -> None:
+        assert SeatHeatVentState.HIGH.to_command_level() == 3
+
+    def test_available_maps_to_zero(self) -> None:
+        assert SeatHeatVentState.AVAILABLE.to_command_level() == 0
+
+    def test_unknown_maps_to_zero(self) -> None:
+        assert SeatHeatVentState.UNKNOWN.to_command_level() == 0
+
+
+# ------------------------------------------------------------------
+# SeatClimateParams.from_current_state
+# ------------------------------------------------------------------
+
+
+class TestSeatClimateParamsFromCurrentState:
+    def test_from_hvac_only(self) -> None:
+        hvac = HvacStatus.model_validate(
+            {
+                "statusNow": {
+                    "mainSeatHeatState": 3,  # HIGH
+                    "mainSeatVentilationState": 0,  # AVAILABLE
+                    "copilotSeatHeatState": 2,  # LOW
+                    "stearingWheelHeatState": 1,  # ON
+                }
+            }
+        )
+        params = SeatClimateParams.from_current_state(hvac=hvac)
+        assert params.main_heat == 3  # HIGH → 3
+        assert params.main_ventilation == 0  # AVAILABLE → 0
+        assert params.copilot_heat == 2  # LOW → 2
+        assert params.steering_wheel_heat == 1
+
+    def test_from_realtime_fallback(self) -> None:
+        realtime = VehicleRealtimeData.model_validate(
+            {
+                "mainSeatHeatState": 2,  # LOW
+                "stearingWheelHeatState": 0,  # OFF
+            }
+        )
+        params = SeatClimateParams.from_current_state(realtime=realtime)
+        assert params.main_heat == 2  # LOW → 2
+        assert params.steering_wheel_heat == 0
+
+    def test_hvac_preferred_over_realtime(self) -> None:
+        hvac = HvacStatus.model_validate({"statusNow": {"mainSeatHeatState": 3}})  # HIGH
+        realtime = VehicleRealtimeData.model_validate({"mainSeatHeatState": 2})  # LOW
+        params = SeatClimateParams.from_current_state(hvac=hvac, realtime=realtime)
+        assert params.main_heat == 3  # uses HVAC HIGH, not realtime LOW
+
+    def test_no_data_defaults_to_zero(self) -> None:
+        params = SeatClimateParams.from_current_state()
+        assert params.main_heat == 0
+        assert params.steering_wheel_heat == 0
+
+
+# ------------------------------------------------------------------
+# minutes_to_time_span
+# ------------------------------------------------------------------
+
+
+class TestMinutesToTimeSpan:
+    @pytest.mark.parametrize(
+        ("minutes", "expected"),
+        [(10, 1), (15, 2), (20, 3), (25, 4), (30, 5)],
+    )
+    def test_valid_durations(self, minutes: int, expected: int) -> None:
+        assert minutes_to_time_span(minutes) == expected
+
+    def test_invalid_duration_raises(self) -> None:
+        with pytest.raises(ValueError, match="duration must be one of"):
+            minutes_to_time_span(12)
+
+    def test_valid_climate_durations_constant(self) -> None:
+        assert VALID_CLIMATE_DURATIONS == (10, 15, 20, 25, 30)

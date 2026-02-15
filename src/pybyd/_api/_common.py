@@ -26,8 +26,10 @@ from pybyd.exceptions import (
     BydEndpointNotSupportedError,
     BydSessionExpiredError,
 )
-from pybyd.models.vehicle import Vehicle
 from pybyd.session import Session
+
+#: API error codes indicating the endpoint is not supported for this vehicle.
+ENDPOINT_NOT_SUPPORTED_CODES: frozenset[str] = frozenset({"1001"})
 
 
 def build_inner_base(
@@ -63,7 +65,17 @@ def _raise_for_code(
     message: str,
     vin: str | None = None,
     not_supported_codes: frozenset[str] | None = None,
+    extra_code_map: dict[frozenset[str], type[BydApiError]] | None = None,
 ) -> None:
+    """Raise the appropriate exception for a non-zero API response code.
+
+    Parameters
+    ----------
+    extra_code_map
+        Optional mapping of ``frozenset[str]`` code sets to exception
+        types.  Checked *before* the generic ``BydApiError`` fallback,
+        but *after* session-expired and not-supported checks.
+    """
     if code in SESSION_EXPIRED_CODES:
         raise BydSessionExpiredError(
             f"{endpoint} failed: code={code} message={message}",
@@ -77,6 +89,14 @@ def _raise_for_code(
             code=code,
             endpoint=endpoint,
         )
+    if extra_code_map is not None:
+        for codes, exc_type in extra_code_map.items():
+            if code in codes:
+                raise exc_type(
+                    f"{endpoint} failed: code={code} message={message}",
+                    code=code,
+                    endpoint=endpoint,
+                )
     raise BydApiError(
         f"{endpoint} failed: code={code} message={message}",
         code=code,
@@ -95,6 +115,8 @@ def decode_respond_data(
     if not isinstance(respond_data, str) or not respond_data:
         return {}
     plaintext = aes_decrypt_utf8(respond_data, content_key)
+    if not plaintext or not plaintext.strip():
+        return {}
     try:
         return json.loads(plaintext)
     except json.JSONDecodeError as exc:
@@ -115,6 +137,8 @@ async def post_token_json(
     now_ms: int | None = None,
     vin: str | None = None,
     not_supported_codes: frozenset[str] | None = None,
+    extra_code_map: dict[frozenset[str], type[BydApiError]] | None = None,
+    user_type: str | None = None,
 ) -> Any:
     """Post a token-enveloped request and return decrypted JSON.
 
@@ -124,7 +148,7 @@ async def post_token_json(
     if now_ms is None:
         now_ms = int(time.time() * 1000)
 
-    outer, content_key = build_token_outer_envelope(config, session, inner, now_ms)
+    outer, content_key = build_token_outer_envelope(config, session, inner, now_ms, user_type=user_type)
 
     response = await transport.post_secure(endpoint, outer)
     code = str(response.get("code", ""))
@@ -135,25 +159,7 @@ async def post_token_json(
             message=str(response.get("message", "")),
             vin=vin,
             not_supported_codes=not_supported_codes,
+            extra_code_map=extra_code_map,
         )
 
     return decode_respond_data(endpoint=endpoint, response=response, content_key=content_key)
-
-
-async def fetch_vehicle_list(
-    config: BydConfig,
-    session: Session,
-    transport: Transport,
-) -> list[Vehicle]:
-    """Fetch all vehicles associated with the authenticated user."""
-    endpoint = "/app/account/getAllListByUserId"
-    inner = build_inner_base(config)
-    decoded = await post_token_json(
-        endpoint=endpoint,
-        config=config,
-        session=session,
-        transport=transport,
-        inner=inner,
-    )
-    items = decoded if isinstance(decoded, list) else []
-    return [Vehicle.model_validate(item) for item in items]

@@ -104,6 +104,7 @@ def _install_transport_trace(client: BydClient, traces: list[dict[str, Any]]) ->
 
     transport.post_secure = traced_post_secure
 
+
 COMMON_OUTER_KEYS: tuple[str, ...] = (
     "countryCode",
     "encryData",

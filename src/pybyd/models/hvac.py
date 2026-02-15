@@ -5,12 +5,13 @@ Mapped from ``/control/getStatusNow`` response documented in API_MAPPING.md.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, ClassVar
 
 from pydantic import model_validator
 
 from pybyd._constants import celsius_to_scale
-from pybyd.models._base import BydBaseModel, BydEnum
+from pybyd.models._base import COMMON_KEY_ALIASES, BydBaseModel, BydEnum, is_temp_sentinel
 from pybyd.models.realtime import AirCirculationMode, SeatHeatVentState, StearingWheelHeat
 
 __all__ = [
@@ -25,11 +26,14 @@ __all__ = [
 
 
 class AcSwitch(BydEnum):
-    """AcSwitch on/off state."""
+    """AcSwitch on/off state.
+
+    From BYD SDK ``getAcStartState()`` (section 6.6.6).
+    """
 
     UNKNOWN = -1
-    OFF = 0
-    ON = 1
+    OFF = 0  # assumed from BYD SDK: AC_POWER_OFF
+    ON = 1  # assumed from BYD SDK: AC_POWER_ON
 
 
 class HvacOverallStatus(BydEnum):
@@ -43,29 +47,37 @@ class HvacOverallStatus(BydEnum):
 
 
 class AirConditioningMode(BydEnum):
-    """A/C mode code.
+    """A/C control mode code.
 
-    API_MAPPING notes: ``1`` observed (confirmed); exact meaning unconfirmed.
+    From BYD SDK ``getAcControlMode()`` (section 6.6.7).
+    ``1`` observed in live data (confirmed), assumed AUTO per SDK.
     """
 
     UNKNOWN = -1
-    MODE_1 = 1
+    AUTO = 1  # observed value=1 per API_MAPPING; assumed from BYD SDK: AC_CTRLMODE_AUTO
+    MANUAL = 2  # assumed from BYD SDK: AC_CTRLMODE_MANUAL
 
 
 class HvacWindMode(BydEnum):
-    """Fan (wind) mode code.
+    """Fan (wind) mode — airflow direction.
 
-    API_MAPPING notes: ``3`` observed (confirmed); exact meaning unconfirmed.
+    From BYD SDK ``getAcWindMode()`` (section 6.6.9).
+    Value ``3`` observed in live data (confirmed).
     """
 
     UNKNOWN = -1
-    MODE_3 = 3
+    FACE = 1  # assumed from BYD SDK: AC_WINDMODE_FACE (blow to face)
+    FACE_FOOT = 2  # assumed from BYD SDK: AC_WINDMODE_FACEFOOT (face + feet)
+    FOOT = 3  # observed value=3 per API_MAPPING; assumed from BYD SDK: AC_WINDMODE_FOOT
+    FOOT_DEFROST = 4  # assumed from BYD SDK: AC_WINDMODE_FOOTDEFROST (feet + defrost)
+    DEFROST = 5  # assumed from BYD SDK: AC_WINDMODE_DEFROST
 
 
 class HvacWindPosition(BydEnum):
     """Airflow direction code (wind position).
 
     API_MAPPING notes: airflow direction (unconfirmed).
+    May overlap with ``HvacWindMode``; exact semantics still unclear.
     """
 
     UNKNOWN = -1
@@ -73,6 +85,14 @@ class HvacWindPosition(BydEnum):
 
 class HvacStatus(BydBaseModel):
     """Current HVAC / climate control state."""
+
+    _KEY_ALIASES: ClassVar[dict[str, str]] = {
+        **COMMON_KEY_ALIASES,
+    }
+
+    _SENTINEL_RULES: ClassVar[dict[str, Callable[..., bool]]] = {
+        "temp_in_car": is_temp_sentinel,
+    }
 
     # --- A/C state ---
     ac_switch: AcSwitch | int | None = None
@@ -106,8 +126,13 @@ class HvacStatus(BydBaseModel):
 
     # --- Defrost ---
     front_defrost_status: int | None = None
+    """Front defrost status.  0=off, 1=on (confirmed).
+    BYD SDK ``getAcDefrostState(FRONT)`` (section 6.6.10)."""
     electric_defrost_status: int | None = None
+    """Rear (electric) defrost status.  0=off (confirmed).
+    BYD SDK ``getAcDefrostState(REAR)`` (section 6.6.10)."""
     wiper_heat_status: int | None = None
+    """Wiper heater status.  0=off (confirmed)."""
 
     # --- Seat heating / ventilation ---
     main_seat_heat_state: SeatHeatVentState | None = None
@@ -130,7 +155,11 @@ class HvacStatus(BydBaseModel):
 
     # --- Air quality ---
     pm: float | None = None
+    """PM2.5 value; 0 observed (confirmed).
+    BYD SDK ``getPM25Value()`` (section 6.7.5)."""
     pm25_state_out_car: float | None = None
+    """Outside PM2.5 state; 0 observed (confirmed).
+    BYD SDK ``getPM25Level(OUT)`` (section 6.7.4)."""
 
     @property
     def is_ac_on(self) -> bool:
@@ -181,7 +210,22 @@ class HvacStatus(BydBaseModel):
 
     @property
     def interior_temp_available(self) -> bool:
-        return self.temp_in_car is not None and self.temp_in_car != -129
+        """Whether interior temperature reading is valid.
+
+        After sentinel normalisation ``temp_in_car`` is ``None`` when
+        the BYD API returned ``-129``, so a simple ``is not None`` suffices.
+        """
+        return self.temp_in_car is not None
+
+    @property
+    def is_steering_wheel_heating(self) -> bool | None:
+        """Whether steering wheel heating is active.
+
+        Returns ``None`` when the state is unknown.
+        """
+        if self.steering_wheel_heat_state is None:
+            return None
+        return self.steering_wheel_heat_state == StearingWheelHeat.ON
 
     @model_validator(mode="before")
     @classmethod
@@ -190,5 +234,9 @@ class HvacStatus(BydBaseModel):
             return values
         status_now = values.get("statusNow")
         if isinstance(status_now, dict):
-            return status_now
+            # The parent _clean_byd_values ran on the outer dict before
+            # this validator.  Re-clean the inner dict so sentinel values
+            # (e.g. "--", "") inside statusNow are properly stripped.
+            aliases: dict[str, str] = getattr(cls, "_KEY_ALIASES", {})
+            return BydBaseModel._clean_dict(status_now, aliases)
         return values

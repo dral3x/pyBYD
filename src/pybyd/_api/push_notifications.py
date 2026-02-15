@@ -7,22 +7,11 @@ Endpoints:
 
 from __future__ import annotations
 
-import json
 import logging
-import secrets
-import time
-from typing import Any
 
-from pybyd._api._envelope import build_token_outer_envelope
-from pybyd._constants import SESSION_EXPIRED_CODES
-from pybyd._crypto.aes import aes_decrypt_utf8
+from pybyd._api._common import ENDPOINT_NOT_SUPPORTED_CODES, build_inner_base, post_token_json
 from pybyd._transport import Transport
 from pybyd.config import BydConfig
-from pybyd.exceptions import (
-    BydApiError,
-    BydEndpointNotSupportedError,
-    BydSessionExpiredError,
-)
 from pybyd.models.control import CommandAck
 from pybyd.models.push_notification import PushNotificationState
 from pybyd.session import Session
@@ -32,52 +21,8 @@ _logger = logging.getLogger(__name__)
 _GET_ENDPOINT = "/app/push/getPushSwitchState"
 _SET_ENDPOINT = "/app/push/setPushSwitchState"
 
-_NOT_SUPPORTED_CODES: frozenset[str] = frozenset({"1001"})
 
-
-def _build_get_push_inner(
-    config: BydConfig,
-    vin: str,
-    now_ms: int,
-) -> dict[str, str]:
-    """Build inner payload for get push state."""
-    return {
-        "deviceType": config.device.device_type,
-        "imeiMD5": config.device.imei_md5,
-        "networkType": config.device.network_type,
-        "random": secrets.token_hex(16).upper(),
-        "timeStamp": str(now_ms),
-        "version": config.app_inner_version,
-        "vin": vin,
-    }
-
-
-def _build_set_push_inner(
-    config: BydConfig,
-    vin: str,
-    now_ms: int,
-    *,
-    push_switch: int,
-) -> dict[str, str]:
-    """Build inner payload for set push state."""
-    return {
-        "deviceType": config.device.device_type,
-        "imeiMD5": config.device.imei_md5,
-        "networkType": config.device.network_type,
-        "pushSwitch": str(push_switch),
-        "random": secrets.token_hex(16).upper(),
-        "timeStamp": str(now_ms),
-        "version": config.app_inner_version,
-        "vin": vin,
-    }
-
-
-def _parse_push_state(data: dict[str, Any], vin: str) -> PushNotificationState:
-    """Parse the push switch state response."""
-    return PushNotificationState.model_validate({"vin": vin, **data})
-
-
-async def get_push_state(
+async def fetch_push_state(
     config: BydConfig,
     session: Session,
     transport: Transport,
@@ -90,34 +35,23 @@ async def get_push_state(
     PushNotificationState
         Current push notification toggle state.
     """
-    now_ms = int(time.time() * 1000)
-    inner = _build_get_push_inner(config, vin, now_ms)
-    outer, content_key = build_token_outer_envelope(config, session, inner, now_ms)
-
-    response = await transport.post_secure(_GET_ENDPOINT, outer)
-    resp_code = str(response.get("code", ""))
-    if resp_code != "0":
-        if resp_code in SESSION_EXPIRED_CODES:
-            raise BydSessionExpiredError(
-                f"{_GET_ENDPOINT} failed: code={resp_code} message={response.get('message', '')}",
-                code=resp_code,
-                endpoint=_GET_ENDPOINT,
-            )
-        if resp_code in _NOT_SUPPORTED_CODES:
-            raise BydEndpointNotSupportedError(
-                f"{_GET_ENDPOINT} not supported for VIN {vin} (code={resp_code})",
-                code=resp_code,
-                endpoint=_GET_ENDPOINT,
-            )
-        raise BydApiError(
-            f"{_GET_ENDPOINT} failed: code={resp_code} message={response.get('message', '')}",
-            code=resp_code,
-            endpoint=_GET_ENDPOINT,
-        )
-
-    data = json.loads(aes_decrypt_utf8(response["respondData"], content_key))
-    _logger.debug("Push state response vin=%s", vin)
-    return _parse_push_state(data if isinstance(data, dict) else {}, vin)
+    inner = build_inner_base(config, vin=vin)
+    decoded = await post_token_json(
+        endpoint=_GET_ENDPOINT,
+        config=config,
+        session=session,
+        transport=transport,
+        inner=inner,
+        vin=vin,
+        not_supported_codes=ENDPOINT_NOT_SUPPORTED_CODES,
+    )
+    _logger.debug(
+        "Push state response decoded vin=%s keys=%s",
+        vin,
+        list(decoded.keys()) if isinstance(decoded, dict) else [],
+    )
+    raw = decoded if isinstance(decoded, dict) else {}
+    return PushNotificationState.model_validate({"vin": vin, **raw})
 
 
 async def set_push_state(
@@ -137,45 +71,25 @@ async def set_push_state(
 
     Returns
     -------
-    dict
-        Decoded API response payload.
+    CommandAck
+        Decoded API acknowledgement.
     """
-    now_ms = int(time.time() * 1000)
-    inner = _build_set_push_inner(
-        config,
-        vin,
-        now_ms,
-        push_switch=1 if enable else 0,
+    inner = build_inner_base(config, vin=vin)
+    inner["pushSwitch"] = str(1 if enable else 0)
+    decoded = await post_token_json(
+        endpoint=_SET_ENDPOINT,
+        config=config,
+        session=session,
+        transport=transport,
+        inner=inner,
+        vin=vin,
+        not_supported_codes=ENDPOINT_NOT_SUPPORTED_CODES,
     )
-    outer, content_key = build_token_outer_envelope(config, session, inner, now_ms)
-
-    response = await transport.post_secure(_SET_ENDPOINT, outer)
-    resp_code = str(response.get("code", ""))
-    if resp_code != "0":
-        if resp_code in SESSION_EXPIRED_CODES:
-            raise BydSessionExpiredError(
-                f"{_SET_ENDPOINT} failed: code={resp_code} message={response.get('message', '')}",
-                code=resp_code,
-                endpoint=_SET_ENDPOINT,
-            )
-        if resp_code in _NOT_SUPPORTED_CODES:
-            raise BydEndpointNotSupportedError(
-                f"{_SET_ENDPOINT} not supported for VIN {vin} (code={resp_code})",
-                code=resp_code,
-                endpoint=_SET_ENDPOINT,
-            )
-        raise BydApiError(
-            f"{_SET_ENDPOINT} failed: code={resp_code} message={response.get('message', '')}",
-            code=resp_code,
-            endpoint=_SET_ENDPOINT,
-        )
-
-    encrypted_inner = response.get("respondData")
-    raw: dict[str, Any] = {}
-    if encrypted_inner:
-        data = json.loads(aes_decrypt_utf8(encrypted_inner, content_key))
-        if isinstance(data, dict):
-            raw = data
-    _logger.debug("Push state set vin=%s enable=%s", vin, enable)
-    result = raw.get("result")
-    return CommandAck(vin=vin, result=result if isinstance(result, str) else None, raw=raw)
+    raw = decoded if isinstance(decoded, dict) else {}
+    _logger.debug(
+        "Push state set response decoded vin=%s enable=%s keys=%s",
+        vin,
+        enable,
+        list(raw.keys()),
+    )
+    return CommandAck.model_validate({"vin": vin, **raw, "raw": raw})

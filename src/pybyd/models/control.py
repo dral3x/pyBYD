@@ -7,13 +7,17 @@ and lightweight acknowledgement wrappers.
 from __future__ import annotations
 
 import enum
-from typing import Annotated, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 from pydantic.alias_generators import to_camel
 
 from pybyd._constants import celsius_to_scale
 from pybyd.models._base import BydBaseModel
+
+if TYPE_CHECKING:
+    from pybyd.models.hvac import HvacStatus  # noqa: F401
+    from pybyd.models.realtime import VehicleRealtimeData  # noqa: F401
 
 # ------------------------------------------------------------------
 # Enums
@@ -98,12 +102,34 @@ class CommandAck(BydBaseModel):
     vin: str = ""
     result: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_result(cls, values: Any) -> Any:
+        """Ensure ``result`` is a string or ``None``."""
+        if not isinstance(values, dict):
+            return values
+        r = values.get("result")
+        if r is not None and not isinstance(r, str):
+            values = {**values, "result": None}
+        return values
+
 
 class VerifyControlPasswordResponse(BydBaseModel):
     """Response from the control password verification endpoint."""
 
     vin: str = ""
     ok: bool | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_ok(cls, values: Any) -> Any:
+        """Ensure ``ok`` is a bool or ``None``."""
+        if not isinstance(values, dict):
+            return values
+        v = values.get("ok")
+        if v is not None and not isinstance(v, bool):
+            values = {**values, "ok": None}
+        return values
 
 
 # ------------------------------------------------------------------
@@ -154,12 +180,8 @@ class ClimateStartParams(ControlParams):
     wind_level: int | None = Field(default=None, ge=0)
     wind_position: int | None = Field(default=None, ge=0)
 
-    @field_serializer("temperature")
-    def _serialize_temperature(self, value: float | None) -> int | None:
-        return celsius_to_scale(value) if value is not None else None
-
-    @field_serializer("copilot_temperature")
-    def _serialize_copilot_temperature(self, value: float | None) -> int | None:
+    @field_serializer("temperature", "copilot_temperature")
+    def _serialize_temp(self, value: float | None) -> int | None:
         return celsius_to_scale(value) if value is not None else None
 
     def to_control_params_map(self) -> dict[str, Any]:
@@ -183,41 +205,78 @@ class ClimateScheduleParams(ClimateStartParams):
     """Schedule time as epoch seconds."""
 
 
-def _coerce_int(value: Any) -> int:
-    """Coerce BYD command inputs to an int.
-
-    This keeps the previous behaviour where values like "1" are accepted.
-    """
-
-    try:
-        return int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("must be an integer") from exc
-
-
-SeatLevel: TypeAlias = Annotated[Literal[0, 1, 2, 3], BeforeValidator(_coerce_int)]
-OnOffInt: TypeAlias = Annotated[Literal[0, 1], BeforeValidator(_coerce_int)]
-
-
 class SeatClimateParams(ControlParams):
     """Parameters for seat heating/ventilation (commandType ``VENTILATIONHEATING``).
 
-    Values use the *command* scale:
-    - 0 = off
-    - 1 = low
-    - 2 = medium
+    Values use the same scale as the status enums:
+    - 0 = not applicable (feature absent)
+    - 1 = off
+    - 2 = low
     - 3 = high
     """
 
-    main_heat: SeatLevel | None = None
-    main_ventilation: SeatLevel | None = None
-    copilot_heat: SeatLevel | None = None
-    copilot_ventilation: SeatLevel | None = None
-    lr_seat_heat: SeatLevel | None = None
-    lr_seat_ventilation: SeatLevel | None = None
-    rr_seat_heat: SeatLevel | None = None
-    rr_seat_ventilation: SeatLevel | None = None
-    steering_wheel_heat: OnOffInt | None = None
+    main_heat: int | None = Field(default=None, ge=0, le=3)
+    main_ventilation: int | None = Field(default=None, ge=0, le=3)
+    copilot_heat: int | None = Field(default=None, ge=0, le=3)
+    copilot_ventilation: int | None = Field(default=None, ge=0, le=3)
+    lr_seat_heat: int | None = Field(default=None, ge=0, le=3)
+    lr_seat_ventilation: int | None = Field(default=None, ge=0, le=3)
+    rr_seat_heat: int | None = Field(default=None, ge=0, le=3)
+    rr_seat_ventilation: int | None = Field(default=None, ge=0, le=3)
+    steering_wheel_heat: int | None = Field(default=None, ge=0, le=1)
+
+    # Mapping from model attribute names → constructor keyword arguments.
+    _SEAT_ATTR_TO_PARAM: ClassVar[dict[str, str]] = {
+        "main_seat_heat_state": "main_heat",
+        "main_seat_ventilation_state": "main_ventilation",
+        "copilot_seat_heat_state": "copilot_heat",
+        "copilot_seat_ventilation_state": "copilot_ventilation",
+        "lr_seat_heat_state": "lr_seat_heat",
+        "lr_seat_ventilation_state": "lr_seat_ventilation",
+        "rr_seat_heat_state": "rr_seat_heat",
+        "rr_seat_ventilation_state": "rr_seat_ventilation",
+    }
+
+    @classmethod
+    def from_current_state(
+        cls,
+        hvac: HvacStatus | None = None,
+        realtime: VehicleRealtimeData | None = None,
+    ) -> SeatClimateParams:
+        """Build params from current vehicle state.
+
+        The BYD API requires *all* seat climate values to be sent with
+        every command.  This factory reads the current state from the
+        HVAC status (preferred) with realtime data as fallback, and
+        converts each ``SeatHeatVentState`` to the command scale via
+        :pymeth:`SeatHeatVentState.to_command_level`.
+
+        Steering wheel heat is included (``1`` = on, ``0`` = off).
+        """
+        from pybyd.models.realtime import SeatHeatVentState, StearingWheelHeat
+
+        kwargs: dict[str, int] = {}
+
+        for attr, param in cls._SEAT_ATTR_TO_PARAM.items():
+            val = None
+            if hvac is not None:
+                val = getattr(hvac, attr, None)
+            if val is None and realtime is not None:
+                val = getattr(realtime, attr, None)
+            if isinstance(val, SeatHeatVentState):
+                kwargs[param] = val.to_command_level()
+            else:
+                kwargs[param] = 0
+
+        # Steering wheel heat
+        sw_val = None
+        if hvac is not None:
+            sw_val = getattr(hvac, "steering_wheel_heat_state", None)
+        if sw_val is None and realtime is not None:
+            sw_val = getattr(realtime, "steering_wheel_heat_state", None)
+        kwargs["steering_wheel_heat"] = 1 if sw_val == StearingWheelHeat.ON else 0
+
+        return cls(**kwargs)
 
 
 class BatteryHeatParams(ControlParams):

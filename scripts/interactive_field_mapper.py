@@ -21,10 +21,11 @@ import logging
 import re
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -44,7 +45,6 @@ from pybyd._tools.field_mapper import (  # noqa: E402
     to_pretty_json,
     utc_now_iso,
 )
-
 
 LOG = logging.getLogger("interactive_field_mapper")
 
@@ -83,10 +83,7 @@ VOLATILE_PATH_PATTERNS: dict[str, list[re.Pattern[str]]] = {
 
 
 def _matches_volatile(endpoint: str, path: str) -> bool:
-    for pat in VOLATILE_PATH_PATTERNS.get(endpoint, []):
-        if pat.search(path):
-            return True
-    return False
+    return any(pat.search(path) for pat in VOLATILE_PATH_PATTERNS.get(endpoint, []))
 
 
 def _section(title: str) -> str:
@@ -297,8 +294,7 @@ def default_steps() -> list[Step]:
         ),
         (
             "horn_find",
-            "Now we are going to see how "
-            "find-vehicle/horn behaviour is detected (if available).",
+            "Now we are going to see how find-vehicle/horn behaviour is detected (if available).",
         ),
         (
             "charging_plug_in",
@@ -496,7 +492,7 @@ async def run() -> None:
             )
             await _ainput("Press Enter to start baseline snapshots...")
             for i in range(args.baseline_snapshots):
-                current_step_id = f"baseline_{i+1}"
+                current_step_id = f"baseline_{i + 1}"
                 snap = await capture_snapshot(
                     client,
                     vin,
@@ -504,7 +500,7 @@ async def run() -> None:
                     include_vehicles=args.include_vehicles,
                 )
                 baseline.append(snap)
-                (run_dir / f"baseline_{i+1}.json").write_text(
+                (run_dir / f"baseline_{i + 1}.json").write_text(
                     to_pretty_json(redact(snap, redaction_cfg)), encoding="utf-8"
                 )
                 if i < args.baseline_snapshots - 1:
@@ -580,7 +576,9 @@ async def run() -> None:
                             step_title=step.title,
                             endpoint=str(endpoint),
                             section="parsed",
-                            diffs={k: (v.get("before"), v.get("after")) for k, v in parsed.items() if isinstance(v, dict)},
+                            diffs={
+                                k: (v.get("before"), v.get("after")) for k, v in parsed.items() if isinstance(v, dict)
+                            },
                         )
                     if isinstance(raw, dict):
                         evidence.add_diff(
