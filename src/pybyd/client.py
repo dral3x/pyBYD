@@ -151,6 +151,8 @@ class BydClient:
             encry_token=token.encry_token,
             ttl=ttl,
         )
+        # Restart MQTT so the new content_key() is used for decryption.
+        self._stop_mqtt()
         await self._ensure_mqtt_started()
 
     async def ensure_session(self) -> Session:

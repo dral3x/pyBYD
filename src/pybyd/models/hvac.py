@@ -134,9 +134,50 @@ class HvacStatus(BydBaseModel):
 
     @property
     def is_ac_on(self) -> bool:
-        if self.ac_switch == AcSwitch.ON:
-            return True
-        return bool(self.status is not None and self.status >= 2)
+        # Prefer the explicit switch state when present.
+        # Some vehicles/reporting paths appear to leave `status` at an
+        # "active" code briefly after the switch flips off, so treating
+        # `status>=2` as authoritative can cause false positives.
+        if self.ac_switch is not None:
+            try:
+                if int(self.ac_switch) == int(AcSwitch.ON):
+                    return True
+                if int(self.ac_switch) == int(AcSwitch.OFF):
+                    return False
+            except (TypeError, ValueError):
+                # Fall through to status-based heuristic.
+                pass
+
+        if self.status is None:
+            return False
+        try:
+            return int(self.status) >= int(HvacOverallStatus.ACTIVE)
+        except (TypeError, ValueError):
+            return False
+
+    @property
+    def is_climate_active(self) -> bool:
+        """Whether the HVAC system appears active.
+
+        This is a more permissive signal than :pyattr:`is_ac_on` and is
+        intended for consumers that want a best-effort "climate running"
+        indicator even when the explicit switch field is missing or
+        temporarily inconsistent.
+        """
+
+        if self.ac_switch is not None:
+            try:
+                if int(self.ac_switch) == int(AcSwitch.ON):
+                    return True
+            except (TypeError, ValueError):
+                pass
+
+        if self.status is None:
+            return False
+        try:
+            return int(self.status) >= int(HvacOverallStatus.ACTIVE)
+        except (TypeError, ValueError):
+            return False
 
     @property
     def interior_temp_available(self) -> bool:

@@ -240,6 +240,20 @@ class TestHvacStatus:
         data = HvacStatus.model_validate({"statusNow": {"acSwitch": 1}})
         assert data.is_ac_on is True
 
+    def test_is_ac_on_prefers_switch_off(self) -> None:
+        # Explicit switch-off should win over any stale/lagging overall status.
+        data = HvacStatus.model_validate({"statusNow": {"acSwitch": 0, "status": 2}})
+        assert data.is_ac_on is False
+
+    def test_is_ac_on_falls_back_to_status(self) -> None:
+        # When the switch field is absent/unknown, allow status to indicate activity.
+        data = HvacStatus.model_validate({"statusNow": {"status": 2}})
+        assert data.is_ac_on is True
+
+    def test_is_climate_active_switch_or_status(self) -> None:
+        data = HvacStatus.model_validate({"statusNow": {"acSwitch": 0, "status": 2}})
+        assert data.is_climate_active is True
+
 
 # ------------------------------------------------------------------
 # ChargingStatus

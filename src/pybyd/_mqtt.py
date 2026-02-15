@@ -214,7 +214,13 @@ class BydMqttRuntime:
                 )
                 self._loop.call_soon_threadsafe(self._on_event, event)
             except Exception:
-                self._logger.debug("MQTT payload parse failed", exc_info=True)
+                snippet = msg.payload[:64].hex() if msg.payload else "<empty>"
+                self._logger.warning(
+                    "MQTT payload parse failed (%d bytes, head=%s)",
+                    len(msg.payload),
+                    snippet,
+                    exc_info=True,
+                )
 
         def on_disconnect(
             _client: mqtt.Client,
