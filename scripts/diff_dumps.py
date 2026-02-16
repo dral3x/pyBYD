@@ -5,6 +5,7 @@ Usage
 -----
     python scripts/diff_dumps.py old.txt new.txt
     python scripts/diff_dumps.py --include-raw old.txt new.txt
+    python scripts/diff_dumps.py --raw-only old.txt new.txt
 """
 
 from __future__ import annotations
@@ -86,7 +87,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Diff two BYD dump files.")
     parser.add_argument("old", help="Older dump file")
     parser.add_argument("new", help="Newer dump file")
-    parser.add_argument("--include-raw", action="store_true", help="Include 'raw' sub-dicts in comparison")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--include-raw", action="store_true", help="Include 'raw' sub-dicts in comparison")
+    group.add_argument("--raw-only", action="store_true", help="Only show differences within 'raw' sub-dicts")
     args = parser.parse_args()
 
     file_old, file_new = Path(args.old), Path(args.new)
@@ -98,10 +101,13 @@ def main() -> None:
     old = json.loads(file_old.read_text(encoding="utf-8"))
     new = json.loads(file_new.read_text(encoding="utf-8"))
 
-    skip_keys = set() if args.include_raw else SKIP_KEYS
+    skip_keys = set() if args.include_raw or args.raw_only else SKIP_KEYS
 
     results: list[tuple[str, Any, Any]] = []
     _diff(old, new, "", results, skip_keys)
+
+    if args.raw_only:
+        results = [(p, o, n) for p, o, n in results if ".raw." in p or ".raw[" in p]
 
     if not results:
         print("No differences found.")
