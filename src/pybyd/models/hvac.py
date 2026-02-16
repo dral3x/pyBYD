@@ -26,61 +26,53 @@ __all__ = [
 
 
 class AcSwitch(BydEnum):
-    """AcSwitch on/off state.
+    """AcSwitch on/off state. """
 
-    From BYD SDK ``getAcStartState()`` (section 6.6.6).
-    """
-
+    # we currently do not know what this is. its not related to the if its on/off it seems, see HvacOverallStatus.
     UNKNOWN = -1
-    OFF = 0  # assumed from BYD SDK: AC_POWER_OFF
-    ON = 1  # assumed from BYD SDK: AC_POWER_ON
 
 
 class HvacOverallStatus(BydEnum):
-    """Overall HVAC status.
-
-    API_MAPPING notes: ``2`` observed while A/C active (confirmed).
-    """
+    """Overall HVAC status."""
 
     UNKNOWN = -1
-    ACTIVE = 2
+    ON = 1
+    OFF = 2
 
 
 class AirConditioningMode(BydEnum):
-    """A/C control mode code.
+    """A/C control mode code."""
 
-    From BYD SDK ``getAcControlMode()`` (section 6.6.7).
-    ``1`` observed in live data (confirmed), assumed AUTO per SDK.
-    """
-
+    # couldnt get reliable results here.
     UNKNOWN = -1
-    AUTO = 1  # observed value=1 per API_MAPPING; assumed from BYD SDK: AC_CTRLMODE_AUTO
-    MANUAL = 2  # assumed from BYD SDK: AC_CTRLMODE_MANUAL
+    AUTO = 1
+    MANUAL = 2
 
 
 class HvacWindMode(BydEnum):
-    """Fan (wind) mode — airflow direction.
+    """Fan (wind) mode — airflow direction."""
 
-    From BYD SDK ``getAcWindMode()`` (section 6.6.9).
-    Value ``3`` observed in live data (confirmed).
-    """
-
+    # couldnt get reliable results here. not all are confirmed.
     UNKNOWN = -1
-    FACE = 1  # assumed from BYD SDK: AC_WINDMODE_FACE (blow to face)
-    FACE_FOOT = 2  # assumed from BYD SDK: AC_WINDMODE_FACEFOOT (face + feet)
-    FOOT = 3  # observed value=3 per API_MAPPING; assumed from BYD SDK: AC_WINDMODE_FOOT
-    FOOT_DEFROST = 4  # assumed from BYD SDK: AC_WINDMODE_FOOTDEFROST (feet + defrost)
-    DEFROST = 5  # assumed from BYD SDK: AC_WINDMODE_DEFROST
+    FACE = 1
+    FACE_FOOT = 2
+    FOOT = 3
+    FOOT_DEFROST = 4
+    DEFROST = 5  # aka warm front windshield
 
 
 class HvacWindPosition(BydEnum):
-    """Airflow direction code (wind position).
-
-    API_MAPPING notes: airflow direction (unconfirmed).
-    May overlap with ``HvacWindMode``; exact semantics still unclear.
-    """
+    """Airflow direction code (wind position)."""
 
     UNKNOWN = -1
+    OFF = 0
+    POSITION_1 = 1
+    POSITION_2 = 2
+    POSITION_3 = 3
+    POSITION_4 = 4
+    POSITION_5 = 5
+    POSITION_6 = 6
+    POSITION_7 = 7
 
 
 class HvacStatus(BydBaseModel):
@@ -163,24 +155,12 @@ class HvacStatus(BydBaseModel):
 
     @property
     def is_ac_on(self) -> bool:
-        # Prefer the explicit switch state when present.
-        # Some vehicles/reporting paths appear to leave `status` at an
-        # "active" code briefly after the switch flips off, so treating
-        # `status>=2` as authoritative can cause false positives.
-        if self.ac_switch is not None:
-            try:
-                if int(self.ac_switch) == int(AcSwitch.ON):
-                    return True
-                if int(self.ac_switch) == int(AcSwitch.OFF):
-                    return False
-            except (TypeError, ValueError):
-                # Fall through to status-based heuristic.
-                pass
-
+        """Whether the A/C is currently on."""
         if self.status is None:
             return False
         try:
-            return int(self.status) >= int(HvacOverallStatus.ACTIVE)
+            # this might be wrong in the long run, but ac_switch is not reliable.
+            return int(self.status) == int(HvacOverallStatus.ON)
         except (TypeError, ValueError):
             return False
 
@@ -193,18 +173,10 @@ class HvacStatus(BydBaseModel):
         indicator even when the explicit switch field is missing or
         temporarily inconsistent.
         """
-
-        if self.ac_switch is not None:
-            try:
-                if int(self.ac_switch) == int(AcSwitch.ON):
-                    return True
-            except (TypeError, ValueError):
-                pass
-
         if self.status is None:
             return False
         try:
-            return int(self.status) >= int(HvacOverallStatus.ACTIVE)
+            return int(self.status) == int(HvacOverallStatus.ON)
         except (TypeError, ValueError):
             return False
 

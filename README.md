@@ -191,60 +191,39 @@ ruff check .              # lint
 mypy src/pybyd            # type check
 ```
 
-## Dump all data
+## Scripts
 
-A standalone script fetches every read-only endpoint and prints both
-the parsed model fields and the raw API JSON — useful for discovering
-unparsed fields or contributing new model coverage:
+Helper scripts live in `scripts/` and require `BYD_USERNAME` / `BYD_PASSWORD` env vars.
+
+### `data_diff.py` — interactive change watcher
+
+Pick a data category (realtime, HVAC, charging, …), then toggle
+something on the vehicle or in the BYD app.  The script polls the API
+and shows a colour-coded diff of exactly which fields changed — noisy
+fields (timestamps, counters) are auto-calibrated away.
 
 ```bash
-export BYD_USERNAME="you@example.com"
-export BYD_PASSWORD="your-password"
-# Human-readable output
-python scripts/dump_all.py
-
-# Only a specific vehicle
-python scripts/dump_all.py --vin LNBX...
-
-# Machine-readable JSON
-python scripts/dump_all.py --json
-
-# Save JSON to a file
-python scripts/dump_all.py --json -o dump.json
-
-# Skip specific endpoints
-python scripts/dump_all.py --skip-gps --skip-energy
-
-# Debug logging
-python scripts/dump_all.py -v
+python scripts/data_diff.py            # interactive menu
+python scripts/data_diff.py --raw      # also show unparsed API fields
+python scripts/data_diff.py --vin X    # target a specific VIN
 ```
 
-## MQTT probe (passive watch)
-
-`scripts/mqtt_probe.py` connects to the app MQTT broker and subscribes to:
-
-- `oversea/res/<userId>`
-
-It reuses pyBYD login/session logic, resolves broker via
-`/app/emqAuth/getEmqBrokerIp` using the same core MQTT helpers as the
-library client, and decrypts payloads using
-`MD5(encryToken)` + AES-128-CBC (zero IV).
+### `dump_all.py` — fetch & print every endpoint
 
 ```bash
-export BYD_USERNAME="you@example.com"
-export BYD_PASSWORD="your-password"
+python scripts/dump_all.py             # human-readable
+python scripts/dump_all.py --json -o dump.json
+python scripts/dump_all.py --skip-gps --skip-energy
+```
 
-# Watch indefinitely (Ctrl+C to stop)
-python scripts/mqtt_probe.py
+### `mqtt_probe.py` — passive MQTT watcher
 
-# Watch for 10 minutes and pretty-print decrypted JSON
-python scripts/mqtt_probe.py --duration 600 --json
+Connects to the BYD MQTT broker, subscribes to your user topic, and
+prints decrypted payloads in real time.
 
-# Print idle notices every 30s if no messages arrive
-python scripts/mqtt_probe.py --idle-report-seconds 30
-
-# Print raw payloads (ASCII hex) too
-python scripts/mqtt_probe.py --raw
+```bash
+python scripts/mqtt_probe.py                        # watch indefinitely
+python scripts/mqtt_probe.py --duration 600 --json  # 10 min, JSON output
 ```
 
 ## Credits

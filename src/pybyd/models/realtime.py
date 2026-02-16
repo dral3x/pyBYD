@@ -88,8 +88,8 @@ class DoorOpenState(BydEnum):
     """
 
     UNKNOWN = -1
-    CLOSED = 0  # confirmed; BYD SDK: BODYWORK_STATE_CLOSED
-    OPEN = 1  # assumed from BYD SDK: BODYWORK_STATE_OPEN
+    CLOSED = 0
+    OPEN = 1
 
 
 class LockState(BydEnum):
@@ -118,17 +118,15 @@ class WindowState(BydEnum):
 
 
 class PowerGear(BydEnum):
-    """Transmission gear position.
+    """Power Gear.
 
-    BYD SDK ``getPowerLevel()`` (section 6.1.9) defines OFF=0, ACC=1, ON=2
-    but cloud API uses different codes: 1=parked, 3=drive (confirmed).
-    Known values from observations.  Unknown values fall back to
-    ``UNKNOWN`` via ``BydEnum._missing_``.
+    Previously thought to represent parked vs drive gear state, but observed values in realtime
+    data suggest it may instead represent whether the vehicle is powered on or off.
     """
 
     UNKNOWN = -1
-    PARKED = 1  # confirmed
-    DRIVE = 3  # confirmed
+    OFF = 1
+    ON = 3  # confirmed
 
 
 class StearingWheelHeat(BydEnum):
@@ -140,9 +138,8 @@ class StearingWheelHeat(BydEnum):
 
     """
 
-    UNKNOWN = -1
-    OFF = 0
-    ON = 1
+    ON = -1  # makes no sense, but tested live.
+    OFF = 1
 
 
 class SeatHeatVentState(BydEnum):
@@ -158,7 +155,7 @@ class SeatHeatVentState(BydEnum):
     """
 
     UNKNOWN = -1
-    AVAILABLE = 0  # dont have the feature ??
+    UNAVAILABLE = 0  # dont have the feature ??
     OFF = 1  # we have the feature but it's currently off
     LOW = 2
     HIGH = 3
@@ -168,7 +165,7 @@ class SeatHeatVentState(BydEnum):
 
         Status and command share the same integer scale, so this is
         the identity for valid states (``OFF = 1``, ``LOW = 2``,
-        ``HIGH = 3``).  ``AVAILABLE`` (0) and ``UNKNOWN`` (−1) both
+        ``HIGH = 3``).  ``UNAVAILABLE`` (0) and ``UNKNOWN`` (−1) both
         map to ``0`` (not applicable / feature absent).
         """
         return max(0, self.value)
@@ -183,8 +180,8 @@ class AirCirculationMode(BydEnum):
 
     UNKNOWN = -1
     UNAVAILABLE = 0
-    INTERNAL = 1  # assumed from BYD SDK: AC_CYCLEMODE_INLOOP
-    EXTERNAL = 2  # assumed from BYD SDK: AC_CYCLEMODE_OUTLOOP
+    EXTERNAL = 1
+    INTERNAL = 2
 
 
 # ------------------------------------------------------------------
@@ -511,7 +508,7 @@ class VehicleRealtimeData(BydBaseModel):
     @property
     def is_vehicle_on(self) -> bool:
         """Whether the vehicle is powered on."""
-        return self.vehicle_state == VehicleState.ON
+        return self.power_gear == PowerGear.ON
 
     @property
     def is_battery_heating(self) -> bool | None:
