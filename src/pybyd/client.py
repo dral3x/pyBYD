@@ -108,6 +108,7 @@ class BydClient:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._mqtt_runtime: BydMqttRuntime | None = None
         self._mqtt_waiters: list[_MqttWaiter] = []
+        self._mqtt_reauth_at: float = 0.0
         self._on_vehicle_info = on_vehicle_info
         self._on_mqtt_event_cb = on_mqtt_event
 
@@ -116,6 +117,18 @@ class BydClient:
     # ------------------------------------------------------------------
 
     async def __aenter__(self) -> BydClient:
+        await self.async_start()
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        await self.async_close()
+
+    async def async_start(self) -> None:
+        """Initialise the client transport and codec.
+
+        Called automatically by ``async with BydClient(...)``, but can
+        also be invoked directly when the lifecycle is managed manually.
+        """
         self._loop = asyncio.get_running_loop()
         if self._http_session is None:
             self._http_session = aiohttp.ClientSession(
@@ -128,9 +141,13 @@ class BydClient:
             logger=_logger,
         )
         await self._codec.async_load_tables()
-        return self
 
-    async def __aexit__(self, *exc: Any) -> None:
+    async def async_close(self) -> None:
+        """Tear down the client transport and MQTT connection.
+
+        Called automatically by ``async with BydClient(...)``, but can
+        also be invoked directly when the lifecycle is managed manually.
+        """
         self._stop_mqtt()
         if not self._external_session and self._http_session is not None:
             await self._http_session.close()
@@ -156,7 +173,11 @@ class BydClient:
             encry_token=token.encry_token,
             ttl=ttl,
         )
-        # Restart MQTT so the new content_key() is used for decryption.
+        # Update the running MQTT runtime's key immediately so any
+        # in-flight messages benefit from the new key, then restart
+        # the connection with fresh credentials.
+        if self._mqtt_runtime is not None:
+            self._mqtt_runtime.update_decrypt_key(self._session.content_key())
         self._stop_mqtt()
         await self._ensure_mqtt_started()
 
@@ -248,6 +269,7 @@ class BydClient:
                 loop=loop,
                 decrypt_key_hex=session.content_key(),
                 on_event=self._on_mqtt_event,
+                on_decrypt_error=self._schedule_mqtt_reauth,
                 keepalive=self._config.mqtt_keepalive,
                 logger=_logger,
             )
@@ -266,6 +288,30 @@ class BydClient:
             if not w.future.done():
                 w.future.cancel()
         self._mqtt_waiters.clear()
+
+    _MQTT_REAUTH_COOLDOWN_S: float = 60.0
+
+    def _schedule_mqtt_reauth(self) -> None:
+        """Schedule a background re-authentication after MQTT decrypt failure.
+
+        Runs on the asyncio event loop (dispatched via ``call_soon_threadsafe``
+        from the paho thread).  Rate-limited to at most once per
+        ``_MQTT_REAUTH_COOLDOWN_S`` seconds to prevent loops.
+        """
+        now = time.monotonic()
+        if now - self._mqtt_reauth_at < self._MQTT_REAUTH_COOLDOWN_S:
+            return
+        self._mqtt_reauth_at = now
+        _logger.info("MQTT decrypt failed — scheduling re-authentication")
+        asyncio.ensure_future(self._mqtt_reauth())  # noqa: RUF006
+
+    async def _mqtt_reauth(self) -> None:
+        """Background re-authentication to recover from MQTT key mismatch."""
+        try:
+            await self.login()
+            _logger.info("MQTT re-auth succeeded — MQTT restarted with new key")
+        except Exception:
+            _logger.debug("MQTT re-auth recovery failed", exc_info=True)
 
     def _on_mqtt_event(self, event: MqttEvent) -> None:
         """Handle a decrypted MQTT event (called from the MQTT thread via call_soon_threadsafe)."""

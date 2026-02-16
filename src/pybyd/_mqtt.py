@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -17,7 +18,7 @@ from pybyd._crypto.aes import aes_decrypt_utf8
 from pybyd._crypto.hashing import md5_hex
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
-from pybyd.exceptions import BydError
+from pybyd.exceptions import BydCryptoError, BydError
 from pybyd.session import Session
 
 
@@ -145,12 +146,14 @@ class BydMqttRuntime:
         loop: asyncio.AbstractEventLoop,
         decrypt_key_hex: str,
         on_event: Callable[[MqttEvent], None],
+        on_decrypt_error: Callable[[], None] | None = None,
         keepalive: int = 120,
         logger: logging.Logger | None = None,
     ) -> None:
         self._loop = loop
         self._decrypt_key_hex = decrypt_key_hex
         self._on_event = on_event
+        self._on_decrypt_error = on_decrypt_error
         self._keepalive = keepalive
         self._logger = logger or logging.getLogger(__name__)
         self._client: mqtt.Client | None = None
@@ -161,6 +164,10 @@ class BydMqttRuntime:
     def is_running(self) -> bool:
         """Whether the MQTT runtime is actively running."""
         return self._running
+
+    def update_decrypt_key(self, key_hex: str) -> None:
+        """Update the AES decryption key (thread-safe string assignment)."""
+        self._decrypt_key_hex = key_hex
 
     def start(self, bootstrap: MqttBootstrap) -> None:
         """Connect and subscribe with provided broker details."""
@@ -220,6 +227,16 @@ class BydMqttRuntime:
                     payload=parsed,
                 )
                 self._loop.call_soon_threadsafe(self._on_event, event)
+            except BydCryptoError:
+                snippet = msg.payload[:64].hex() if msg.payload else "<empty>"
+                self._logger.debug(
+                    "MQTT decrypt failed (%d bytes, head=%s) — likely stale key, " "requesting re-auth",
+                    len(msg.payload),
+                    snippet,
+                )
+                if self._on_decrypt_error is not None:
+                    with contextlib.suppress(RuntimeError):
+                        self._loop.call_soon_threadsafe(self._on_decrypt_error)
             except Exception:
                 snippet = msg.payload[:64].hex() if msg.payload else "<empty>"
                 self._logger.warning(
