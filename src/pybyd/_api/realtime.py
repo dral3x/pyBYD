@@ -7,7 +7,6 @@ Endpoints:
 
 from __future__ import annotations
 
-import logging
 import time
 from typing import Any
 
@@ -15,8 +14,6 @@ from pybyd._api._common import ENDPOINT_NOT_SUPPORTED_CODES, build_inner_base, p
 from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.session import Session
-
-_logger = logging.getLogger(__name__)
 
 _TRIGGER_ENDPOINT = "/vehicleInfo/vehicle/vehicleRealTimeRequest"
 _POLL_ENDPOINT = "/vehicleInfo/vehicle/vehicleRealTimeResult"
@@ -45,11 +42,6 @@ async def fetch_realtime_endpoint(
         now_ms=now_ms,
         vin=vin,
         not_supported_codes=ENDPOINT_NOT_SUPPORTED_CODES,
-    )
-    _logger.debug(
-        "Realtime response decoded vin=%s keys=%s",
-        vin,
-        list(decoded.keys()) if isinstance(decoded, dict) else [],
     )
     vehicle_info: dict[str, Any] = decoded if isinstance(decoded, dict) else {}
     next_serial = vehicle_info.get("requestSerial") or request_serial

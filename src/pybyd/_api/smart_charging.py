@@ -7,15 +7,11 @@ Endpoints:
 
 from __future__ import annotations
 
-import logging
-
 from pybyd._api._common import ENDPOINT_NOT_SUPPORTED_CODES, build_inner_base, post_token_json
 from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.models.control import CommandAck
 from pybyd.session import Session
-
-_logger = logging.getLogger(__name__)
 
 _TOGGLE_ENDPOINT = "/control/smartCharge/changeChargeStatue"
 _SAVE_ENDPOINT = "/control/smartCharge/saveOrUpdate"
@@ -53,12 +49,6 @@ async def toggle_smart_charging(
         not_supported_codes=ENDPOINT_NOT_SUPPORTED_CODES,
     )
     raw = decoded if isinstance(decoded, dict) else {}
-    _logger.debug(
-        "Smart charge toggle response decoded vin=%s enable=%s keys=%s",
-        vin,
-        enable,
-        list(raw.keys()),
-    )
     return CommandAck.model_validate({"vin": vin, **raw, "raw": raw})
 
 
@@ -114,10 +104,4 @@ async def save_charging_schedule(
         not_supported_codes=ENDPOINT_NOT_SUPPORTED_CODES,
     )
     raw = decoded if isinstance(decoded, dict) else {}
-    _logger.debug(
-        "Smart charge schedule response decoded vin=%s target_soc=%d keys=%s",
-        vin,
-        target_soc,
-        list(raw.keys()),
-    )
     return CommandAck.model_validate({"vin": vin, **raw, "raw": raw})

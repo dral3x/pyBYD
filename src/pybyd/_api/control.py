@@ -115,11 +115,6 @@ async def verify_control_password(
     )
 
     raw = data if isinstance(data, dict) else {}
-    _logger.debug(
-        "Verify control password response decoded vin=%s keys=%s",
-        vin,
-        list(raw.keys()),
-    )
     return VerifyControlPasswordResponse.model_validate({"vin": vin, **raw, "raw": raw})
 
 

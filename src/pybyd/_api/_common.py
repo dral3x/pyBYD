@@ -20,7 +20,6 @@ from typing import Any
 from pybyd._api._envelope import build_token_outer_envelope
 from pybyd._constants import SESSION_EXPIRED_CODES
 from pybyd._crypto.aes import aes_decrypt_utf8
-from pybyd._redact import redact_for_log
 from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.exceptions import (
@@ -130,11 +129,7 @@ def decode_respond_data(
             endpoint=endpoint,
         ) from exc
 
-    _logger.debug(
-        "HTTP respondData decoded endpoint=%s parsed=%s",
-        endpoint,
-        redact_for_log(decoded),
-    )
+    _logger.debug("HTTP decoded endpoint=%s plaintext=%s", endpoint, plaintext)
     return decoded
 
 

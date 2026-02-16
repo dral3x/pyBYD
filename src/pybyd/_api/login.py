@@ -17,7 +17,6 @@ from typing import Any
 from pybyd._crypto.aes import aes_decrypt_utf8, aes_encrypt_hex
 from pybyd._crypto.hashing import compute_checkcode, md5_hex, pwd_login_key, sha1_mixed
 from pybyd._crypto.signing import build_sign_string
-from pybyd._redact import redact_for_log
 from pybyd.config import BydConfig
 from pybyd.exceptions import BydAuthenticationError
 from pybyd.models.token import AuthToken
@@ -148,8 +147,9 @@ def parse_login_response(
             endpoint="/app/account/login",
         )
 
-    inner = json.loads(aes_decrypt_utf8(respond_data, pwd_login_key(password)))
-    _logger.debug("HTTP login respondData decoded parsed=%s", redact_for_log(inner))
+    plaintext = aes_decrypt_utf8(respond_data, pwd_login_key(password))
+    inner = json.loads(plaintext)
+    _logger.debug("HTTP decoded endpoint=/app/account/login plaintext=%s", plaintext)
     token = inner.get("token") if isinstance(inner, dict) else None
 
     if not token or not token.get("userId") or not token.get("signToken") or not token.get("encryToken"):

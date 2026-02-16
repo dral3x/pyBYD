@@ -265,7 +265,7 @@ def _main() -> int:
             return
 
         try:
-            parsed_payload = decode_mqtt_payload(msg.payload, bootstrap.decrypt_key_hex)
+            parsed_payload, _plaintext = decode_mqtt_payload(msg.payload, bootstrap.decrypt_key_hex)
             stats.decrypt_ok += 1
             if args.json:
                 print(json.dumps(parsed_payload, indent=2, ensure_ascii=False, sort_keys=True))

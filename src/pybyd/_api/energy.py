@@ -6,15 +6,11 @@ Endpoint:
 
 from __future__ import annotations
 
-import logging
-
 from pybyd._api._common import ENDPOINT_NOT_SUPPORTED_CODES, build_inner_base, post_token_json
 from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.models.energy import EnergyConsumption
 from pybyd.session import Session
-
-_logger = logging.getLogger(__name__)
 
 _ENDPOINT = "/vehicleInfo/vehicle/getEnergyConsumption"
 
@@ -57,10 +53,5 @@ async def fetch_energy_consumption(
         inner=inner,
         vin=vin,
         not_supported_codes=ENDPOINT_NOT_SUPPORTED_CODES,
-    )
-    _logger.debug(
-        "Energy response decoded vin=%s keys=%s",
-        vin,
-        list(decoded.keys()) if isinstance(decoded, dict) else [],
     )
     return EnergyConsumption.model_validate(decoded)

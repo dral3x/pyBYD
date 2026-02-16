@@ -15,7 +15,6 @@ from pydantic import BaseModel, ConfigDict
 from pybyd._api._common import build_inner_base, post_token_json
 from pybyd._crypto.aes import aes_decrypt_utf8
 from pybyd._crypto.hashing import md5_hex
-from pybyd._redact import redact_for_log
 from pybyd._transport import SecureTransport
 from pybyd.config import BydConfig
 from pybyd.exceptions import BydError
@@ -120,15 +119,21 @@ async def fetch_mqtt_bootstrap(
     )
 
 
-def decode_mqtt_payload(payload: bytes, decrypt_key_hex: str) -> dict[str, Any]:
-    """Decrypt and parse MQTT payload bytes into a JSON object."""
+def decode_mqtt_payload(payload: bytes, decrypt_key_hex: str) -> tuple[dict[str, Any], str]:
+    """Decrypt and parse MQTT payload bytes into a JSON object.
+
+    Returns
+    -------
+    tuple[dict, str]
+        The parsed dict **and** the decrypted plaintext string.
+    """
     raw_text = payload.decode("ascii", errors="replace")
     raw_text = "".join(raw_text.split())
     plain = aes_decrypt_utf8(raw_text, decrypt_key_hex)
     parsed = json.loads(plain)
     if not isinstance(parsed, dict):
         raise BydError("MQTT payload decrypted to non-object JSON")
-    return parsed
+    return parsed, plain
 
 
 class BydMqttRuntime:
@@ -196,17 +201,18 @@ class BydMqttRuntime:
 
         def on_message(_c: mqtt.Client, _userdata: Any, msg: mqtt.MQTTMessage) -> None:
             try:
-                parsed = decode_mqtt_payload(msg.payload, self._decrypt_key_hex)
-                self._logger.debug(
-                    "MQTT publish received topic=%s parsed=%s",
-                    msg.topic,
-                    redact_for_log(parsed),
-                )
+                parsed, plaintext = decode_mqtt_payload(msg.payload, self._decrypt_key_hex)
 
                 event_name = str(parsed.get("event") or "")
                 vin_value = parsed.get("vin")
                 vin = vin_value if isinstance(vin_value, str) and vin_value else None
-                self._logger.debug("MQTT payload decoded event=%s vin=%s", event_name, vin)
+                self._logger.debug(
+                    "MQTT decoded topic=%s event=%s vin=%s plaintext=%s",
+                    msg.topic,
+                    event_name,
+                    vin,
+                    plaintext,
+                )
                 event = MqttEvent(
                     event=event_name,
                     vin=vin,

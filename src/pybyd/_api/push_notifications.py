@@ -7,16 +7,12 @@ Endpoints:
 
 from __future__ import annotations
 
-import logging
-
 from pybyd._api._common import ENDPOINT_NOT_SUPPORTED_CODES, build_inner_base, post_token_json
 from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.models.control import CommandAck
 from pybyd.models.push_notification import PushNotificationState
 from pybyd.session import Session
-
-_logger = logging.getLogger(__name__)
 
 _GET_ENDPOINT = "/app/push/getPushSwitchState"
 _SET_ENDPOINT = "/app/push/setPushSwitchState"
@@ -44,11 +40,6 @@ async def fetch_push_state(
         inner=inner,
         vin=vin,
         not_supported_codes=ENDPOINT_NOT_SUPPORTED_CODES,
-    )
-    _logger.debug(
-        "Push state response decoded vin=%s keys=%s",
-        vin,
-        list(decoded.keys()) if isinstance(decoded, dict) else [],
     )
     raw = decoded if isinstance(decoded, dict) else {}
     return PushNotificationState.model_validate({"vin": vin, **raw})
@@ -86,10 +77,4 @@ async def set_push_state(
         not_supported_codes=ENDPOINT_NOT_SUPPORTED_CODES,
     )
     raw = decoded if isinstance(decoded, dict) else {}
-    _logger.debug(
-        "Push state set response decoded vin=%s enable=%s keys=%s",
-        vin,
-        enable,
-        list(raw.keys()),
-    )
     return CommandAck.model_validate({"vin": vin, **raw, "raw": raw})

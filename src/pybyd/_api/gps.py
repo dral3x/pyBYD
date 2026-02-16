@@ -7,15 +7,12 @@ Endpoints:
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from pybyd._api._common import ENDPOINT_NOT_SUPPORTED_CODES, build_inner_base, post_token_json
 from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.session import Session
-
-_logger = logging.getLogger(__name__)
 
 _TRIGGER_ENDPOINT = "/control/getGpsInfo"
 _POLL_ENDPOINT = "/control/getGpsInfoResult"
@@ -47,11 +44,6 @@ async def fetch_gps_endpoint(
         inner=inner,
         vin=vin,
         not_supported_codes=ENDPOINT_NOT_SUPPORTED_CODES,
-    )
-    _logger.debug(
-        "GPS response decoded vin=%s keys=%s",
-        vin,
-        list(decoded.keys()) if isinstance(decoded, dict) else [],
     )
     if not isinstance(decoded, dict):
         return {}, request_serial

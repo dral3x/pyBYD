@@ -11,7 +11,6 @@ import aiohttp
 
 from pybyd._constants import USER_AGENT
 from pybyd._crypto.bangcle import BangcleCodec
-from pybyd._redact import redact_for_log
 from pybyd.config import BydConfig
 from pybyd.exceptions import BydTransportError
 
@@ -122,13 +121,5 @@ class SecureTransport:
                 f"Bangcle response from {endpoint} is not JSON: {decoded_text[:64]}",
                 endpoint=endpoint,
             ) from exc
-
-        # Match MQTT logging style: show the decoded outer response.
-        # NOTE: respondData/encryData/request/response/token/password fields are redacted.
-        self._logger.debug(
-            "HTTP response received endpoint=%s parsed=%s",
-            endpoint,
-            redact_for_log(result),
-        )
 
         return result

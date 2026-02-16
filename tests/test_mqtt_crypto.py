@@ -16,6 +16,6 @@ def test_decode_mqtt_payload_uses_content_key_shape() -> None:
     cipher_hex = aes_encrypt_hex(plaintext, key_hex)
 
     spaced = f"  {cipher_hex[:10]}\n{cipher_hex[10:]}  "
-    parsed = decode_mqtt_payload(spaced.encode("ascii"), key_hex)
+    parsed, _plaintext = decode_mqtt_payload(spaced.encode("ascii"), key_hex)
     assert parsed["event"] == "vehicleInfo"
     assert parsed["vin"] == "TESTVIN"

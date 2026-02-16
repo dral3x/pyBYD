@@ -6,15 +6,11 @@ Endpoint:
 
 from __future__ import annotations
 
-import logging
-
 from pybyd._api._common import build_inner_base, post_token_json
 from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.models.vehicle import Vehicle
 from pybyd.session import Session
-
-_logger = logging.getLogger(__name__)
 
 _ENDPOINT = "/app/account/getAllListByUserId"
 
@@ -32,10 +28,6 @@ async def fetch_vehicle_list(
         session=session,
         transport=transport,
         inner=inner,
-    )
-    _logger.debug(
-        "Vehicle list response decoded count=%d",
-        len(decoded) if isinstance(decoded, list) else 0,
     )
     items = decoded if isinstance(decoded, list) else []
     return [Vehicle.model_validate(item) for item in items]

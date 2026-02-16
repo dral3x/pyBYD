@@ -6,15 +6,11 @@ Endpoints:
 
 from __future__ import annotations
 
-import logging
-
 from pybyd._api._common import ENDPOINT_NOT_SUPPORTED_CODES, build_inner_base, post_token_json
 from pybyd._transport import Transport
 from pybyd.config import BydConfig
 from pybyd.models.control import CommandAck
 from pybyd.session import Session
-
-_logger = logging.getLogger(__name__)
 
 _RENAME_ENDPOINT = "/control/vehicle/modifyAutoAlias"
 
@@ -51,10 +47,4 @@ async def rename_vehicle(
         not_supported_codes=ENDPOINT_NOT_SUPPORTED_CODES,
     )
     raw = decoded if isinstance(decoded, dict) else {}
-    _logger.debug(
-        "Vehicle rename response decoded vin=%s name=%s keys=%s",
-        vin,
-        name,
-        list(raw.keys()),
-    )
     return CommandAck.model_validate({"vin": vin, **raw, "raw": raw})
