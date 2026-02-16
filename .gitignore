@@ -56,3 +56,4 @@ coverage.xml
 data/
 offline.json
 field-mapper-runs/
+dump-*.json
