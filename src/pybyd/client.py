@@ -273,7 +273,10 @@ class BydClient:
                 keepalive=self._config.mqtt_keepalive,
                 logger=_logger,
             )
-            runtime.start(bootstrap)
+            # runtime.start() performs blocking I/O (TLS handshake,
+            # TCP connect) so run it in an executor to avoid blocking
+            # the asyncio event loop.
+            await loop.run_in_executor(None, runtime.start, bootstrap)
             self._mqtt_runtime = runtime
         except Exception:
             _logger.debug("MQTT startup failed", exc_info=True)
