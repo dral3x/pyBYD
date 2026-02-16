@@ -40,15 +40,91 @@ _src = _repo / "src"
 if _src.is_dir():
     sys.path.insert(0, str(_src))
 
-# pylint: disable=wrong-import-position
-from pybyd._tools.field_mapper import (  # noqa: E402
-    diff_flatmaps,
-    flatten_json,
-    normalize_for_compare,
-    safe_json_value,
-)
-
 from pybyd import BydClient, BydConfig  # noqa: E402
+
+
+# ── Inline helpers (formerly pybyd._tools.field_mapper) ──────
+
+
+def safe_json_value(obj: Any) -> Any:
+    """Recursively convert a value to JSON-safe primitives.
+
+    Enums → ``{"name": ..., "value": ...}``; everything else passes through.
+    """
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    if isinstance(obj, dict):
+        return {str(k): safe_json_value(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [safe_json_value(v) for v in obj]
+    # Enum-like
+    if hasattr(obj, "name") and hasattr(obj, "value"):
+        return {"name": obj.name, "value": obj.value}
+    return str(obj)
+
+
+def flatten_json(
+    obj: dict[str, Any],
+    *,
+    _prefix: str = "",
+) -> dict[str, Any]:
+    """Flatten a nested dict/list into dot-notation paths.
+
+    Lists use ``[i]`` indexing.  Empty lists/dicts are kept as leaf values.
+    """
+    out: dict[str, Any] = {}
+    for key, value in obj.items():
+        path = f"{_prefix}.{key}" if _prefix else key
+        if isinstance(value, dict) and value:
+            out.update(flatten_json(value, _prefix=path))
+        elif isinstance(value, list) and value:
+            for i, item in enumerate(value):
+                idx_path = f"{path}[{i}]"
+                if isinstance(item, dict) and item:
+                    out.update(flatten_json(item, _prefix=idx_path))
+                else:
+                    out[idx_path] = item
+        else:
+            out[path] = value
+    return out
+
+
+def normalize_for_compare(value: Any) -> Any:
+    """Normalise a value for comparison.
+
+    Returns *None* for sentinel / empty values so that they compare as
+    "absent" rather than producing spurious diffs.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip() in ("", "--", "null"):
+        return None
+    if isinstance(value, float) and (value != value):  # NaN check
+        return None
+    return value
+
+
+def diff_flatmaps(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    *,
+    ignored_paths: set[str] | None = None,
+) -> dict[str, tuple[Any, Any]]:
+    """Return ``{path: (old, new)}`` for every path that changed.
+
+    Paths in *ignored_paths* are silently skipped.
+    """
+    ignored = ignored_paths or set()
+    changes: dict[str, tuple[Any, Any]] = {}
+    all_keys = set(before) | set(after)
+    for key in all_keys:
+        if key in ignored:
+            continue
+        old = normalize_for_compare(before.get(key))
+        new = normalize_for_compare(after.get(key))
+        if old != new:
+            changes[key] = (before.get(key), after.get(key))
+    return changes
 
 LOG = logging.getLogger("data_diff")
 

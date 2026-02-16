@@ -52,19 +52,12 @@ class VehicleState(BydEnum):
 
 
 class ChargingState(BydEnum):
-    """Charging state indicator.
-
-    Used for both ``charging_state`` and ``charge_state`` fields.
-    BYD SDK (section 6.14) documents charging mode, gun connection,
-    and charger status as separate fields.
-    ``0`` means connected but not actively charging.
-    ``15`` means the charge gun is plugged in but not charging.
-    """
+    """Charging state indicator."""
 
     UNKNOWN = -1
-    NOT_CHARGING = 0  # confirmed
-    CHARGING = 1  # confirmed on chargeState field
-    GUN_CONNECTED = 15  # confirmed; gun plugged in, not charging
+    NOT_CHARGING = 0
+    CHARGING = 1 
+    CONNECTED = 15  # connected, not charging
 
 
 class TirePressureUnit(BydEnum):
@@ -75,9 +68,9 @@ class TirePressureUnit(BydEnum):
     """
 
     UNKNOWN = -1
-    BAR = 1  # confirmed
-    PSI = 2  # assumed from BYD SDK
-    KPA = 3  # assumed from BYD SDK
+    BAR = 1
+    PSI = 2
+    KPA = 3
 
 
 class DoorOpenState(BydEnum):
@@ -248,7 +241,7 @@ class VehicleRealtimeData(BydBaseModel):
     speed: float | None = None
     """Current speed (km/h)."""
     power_gear: PowerGear | None = None
-    """Gear position (1=parked, 3=drive)."""
+    """Car on/off."""
 
     # --- Climate ---
     temp_in_car: float | None = None
@@ -285,7 +278,7 @@ class VehicleRealtimeData(BydBaseModel):
     charging_state: ChargingState = ChargingState.UNKNOWN
     """Charging state (-1=unknown, 0=not charging, 15=gun connected)."""
     charge_state: ChargingState | None = None
-    """Charge gun state (-1=unknown, 15=gun plugged in, not charging)."""
+    """Charge gun state (-1=unknown, 15=connected, not charging)."""
     wait_status: int | None = None
     """Charge wait status."""
     full_hour: int | None = None
