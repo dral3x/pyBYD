@@ -33,6 +33,7 @@ _logger = logging.getLogger(__name__)
 
 CONTROL_PASSWORD_ERROR_CODES: frozenset[str] = frozenset({"5005", "5006"})
 REMOTE_CONTROL_SERVICE_ERROR_CODES: frozenset[str] = frozenset({"1009"})
+REMOTE_CONTROL_GENERIC_ERROR_CODES: frozenset[str] = frozenset({"1001"})
 REMOTE_CONTROL_ENDPOINTS: frozenset[str] = frozenset({"/control/remoteControl", "/control/remoteControlResult"})
 VERIFY_CONTROL_PASSWORD_ENDPOINT = "/vehicle/vehicleswitch/verifyControlPassword"
 
@@ -43,6 +44,7 @@ _CONTROL_EXTRA_CODES: dict[frozenset[str], type[BydApiError]] = {
 _REMOTE_CONTROL_EXTRA_CODES: dict[frozenset[str], type[BydApiError]] = {
     CONTROL_PASSWORD_ERROR_CODES: BydControlPasswordError,
     REMOTE_CONTROL_SERVICE_ERROR_CODES: BydRemoteControlError,
+    REMOTE_CONTROL_GENERIC_ERROR_CODES: BydRemoteControlError,
 }
 
 
@@ -163,7 +165,10 @@ async def _fetch_control_endpoint(
     )
 
     # Build extra code map: for remote control endpoints, include service errors.
-    extra = _REMOTE_CONTROL_EXTRA_CODES if endpoint in REMOTE_CONTROL_ENDPOINTS else _CONTROL_EXTRA_CODES
+    # For remote control endpoints, do NOT pass not_supported_codes — code 1001
+    # means something different (generic rejection) for commands vs data endpoints.
+    is_remote = endpoint in REMOTE_CONTROL_ENDPOINTS
+    extra = _REMOTE_CONTROL_EXTRA_CODES if is_remote else _CONTROL_EXTRA_CODES
     result = await post_token_json(
         endpoint=endpoint,
         config=config,
@@ -171,7 +176,7 @@ async def _fetch_control_endpoint(
         transport=transport,
         inner=inner,
         vin=vin,
-        not_supported_codes=ENDPOINT_NOT_SUPPORTED_CODES,
+        not_supported_codes=None if is_remote else ENDPOINT_NOT_SUPPORTED_CODES,
         extra_code_map=extra,
     )
 
