@@ -1,6 +1,6 @@
 # BYD API Field Mapping Reference
 
-This file documents the API fields that pyBYD currently parses and exposes.
+This file documents every API field observed in live captures and whether pyBYD parses it into a typed model field or keeps it only in `raw`.
 
 How to update this file:
 
@@ -8,7 +8,7 @@ How to update this file:
 2. Compare the JSON outputs to identify which fields change and what the values mean.
 3. Update the tables below and (if needed) extend the parsers/models.
 
-Last updated: 2026-02-13
+Last updated: 2026-02-16
 
 Base URL: https://dilinkappoversea-eu.byd.auto
 
@@ -42,6 +42,9 @@ URL base: https://dilinkappoversea-eu.byd.auto
 - confirmed: verified by live captures
 - unconfirmed: plausible but not verified yet
 - conflicting: observed data contradicts the assumed meaning
+
+Each endpoint section has a main table listing **parsed** fields (extracted into typed Python model attributes)
+and, where applicable, a separate "Unparsed fields (raw only)" table listing fields kept only in the `raw` dict.
 
 ---
 
@@ -176,6 +179,33 @@ Parser: `src/pybyd/_api/realtime.py`
 | Features | `upgradeStatus` | `upgrade_status` | `int | None` | 0=none (confirmed) |
 | Metadata | `time` | `timestamp` | `int | None` | epoch seconds (confirmed) |
 
+### Unparsed fields (raw only)
+
+These fields are present in the API response but not extracted into `VehicleRealtimeData` model attributes.
+They are accessible via the `raw` dict.
+
+| Group | API field | Observed value | Notes |
+|---|---|---|---|
+| Seats | `lrThirdHeatState` | `0` | third-row left seat heat (unconfirmed) |
+| Seats | `lrThirdVentilationState` | `0` | third-row left seat ventilation (unconfirmed) |
+| Seats | `rrThirdHeatState` | `0` | third-row right seat heat (unconfirmed) |
+| Seats | `rrThirdVentilationState` | `0` | third-row right seat ventilation (unconfirmed) |
+| Charging | `rate` | `-999`, `-9`, `0` | possibly charging rate/sentinel (unconfirmed) |
+| Charging | `lessOneMin` | `false` | possibly time-to-full flag (unconfirmed) |
+| Energy | `energyConsumption` | `"15.0"` | unknown consumption field, different from `nearestEnergyConsumption` (unconfirmed) |
+| Energy | `totalConsumption` | `"16.6度/百公里"` | Chinese-locale total consumption label (confirmed) |
+| Energy | `totalConsumptionEn` | `"16.6kW·h/100km"` | English-locale total consumption label (unconfirmed) |
+| Fuel | `oilPressureSystem` | `0` | oil pressure system warning (unconfirmed) |
+| Warnings | `brakingSystem` | `0` | braking system warning (unconfirmed) |
+| Warnings | `chargingSystem` | `0` | charging system warning (unconfirmed) |
+| Warnings | `steeringSystem` | `0` | steering system warning (unconfirmed) |
+| Warnings | `okLight` | `0` | OK/ready indicator light (unconfirmed) |
+| Features | `repairModeSwitch` | `"0"` | repair/service mode flag (unconfirmed) |
+| Metadata | `vehicleTimeZone` | `"Europe/Rome"` | vehicle configured timezone (unconfirmed) |
+| Other | `powerBatteryConnection` | `-1`, `0` | battery connectivity indicator (unconfirmed) |
+| Other | `gl` | `-29.8`, `9788.8`, `0` | unknown metric (unconfirmed) |
+| Other | `ins` | `-1` | unknown (unconfirmed) |
+
 ---
 
 ## HVAC / climate status
@@ -190,15 +220,15 @@ Response wraps data under the `statusNow` key.
 
 | API field | Python field | Type | Values / notes |
 |---|---|---|---|
-| `acSwitch` | `ac_switch` | `int | None` | 0=off, 1=on (confirmed) |
-| `status` | `status` | `int | None` | overall HVAC status; `2` observed while A/C active (confirmed) |
-| `airConditioningMode` | `air_conditioning_mode` | `int | None` | mode code; `1` observed (confirmed) |
-| `windMode` | `wind_mode` | `int | None` | fan mode code; `3` observed (confirmed) |
-| `windPosition` | `wind_position` | `int | None` | airflow direction (unconfirmed) |
-| `cycleChoice` | `cycle_choice` | `int | None` | `2` observed in live capture (confirmed); exact mapping still unconfirmed |
-| `mainSettingTemp` | `main_setting_temp` | `int | None` | set temp integer (confirmed) |
+| `acSwitch` | `ac_switch` | `AcSwitch | int | None` | 0=off, 1=on (confirmed) |
+| `status` | `status` | `HvacOverallStatus | int | None` | overall HVAC status; `2` observed while A/C active (confirmed) |
+| `airConditioningMode` | `air_conditioning_mode` | `AirConditioningMode | int | None` | mode code; `1` observed (confirmed) |
+| `windMode` | `wind_mode` | `HvacWindMode | int | None` | fan mode code; `3` observed (confirmed) |
+| `windPosition` | `wind_position` | `HvacWindPosition | int | None` | airflow direction (unconfirmed) |
+| `cycleChoice` | `cycle_choice` | `AirCirculationMode | int | None` | `2` observed in live capture (confirmed); exact mapping still unconfirmed |
+| `mainSettingTemp` | `main_setting_temp` | `float | None` | set temp integer on BYD scale (confirmed) |
 | `mainSettingTempNew` | `main_setting_temp_new` | `float | None` | set temp C (confirmed) |
-| `copilotSettingTemp` | `copilot_setting_temp` | `int | None` | passenger set temp (confirmed) |
+| `copilotSettingTemp` | `copilot_setting_temp` | `float | None` | passenger set temp (confirmed) |
 | `copilotSettingTempNew` | `copilot_setting_temp_new` | `float | None` | passenger set temp C (confirmed) |
 | `tempInCar` | `temp_in_car` | `float | None` | interior C; -129 means unavailable (confirmed) |
 | `tempOutCar` | `temp_out_car` | `float | None` | exterior C (confirmed) |
@@ -210,7 +240,7 @@ Response wraps data under the `statusNow` key.
 | `mainSeatVentilationState` | `main_seat_ventilation_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed) |
 | `copilotSeatHeatState` | `copilot_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off, 1=inactive (confirmed), 2=low, 3=high (confirmed) |
 | `copilotSeatVentilationState` | `copilot_seat_ventilation_state` | `SeatHeatVentState | int | None` | 0=off, 2=low, 3=high (confirmed) |
-| `steeringWheelHeatState` | `steering_wheel_heat_state` | `SeatHeatVentState | int | None` | 0=off (confirmed), 1 observed (confirmed) |
+| `steeringWheelHeatState` | `steering_wheel_heat_state` | `StearingWheelHeat | int | None` | 0=off (confirmed), 1 observed (confirmed) |
 | `lrSeatHeatState` | `lr_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off (confirmed) |
 | `lrSeatVentilationState` | `lr_seat_ventilation_state` | `SeatHeatVentState | int | None` | 0=off (confirmed) |
 | `rrSeatHeatState` | `rr_seat_heat_state` | `SeatHeatVentState | int | None` | 0=off (confirmed) |
@@ -219,8 +249,30 @@ Response wraps data under the `statusNow` key.
 | `rapidDecreaseTempState` | `rapid_decrease_temp_state` | `int | None` | 0=off (confirmed) |
 | `refrigeratorState` | `refrigerator_state` | `int | None` | 0=off (confirmed) |
 | `refrigeratorDoorState` | `refrigerator_door_state` | `int | None` | 0=closed (confirmed); `-1` also observed (likely unsupported on some vehicles) |
-| `pm` | `pm` | `int | None` | PM2.5 value; `0` observed (confirmed) |
-| `pm25StateOutCar` | `pm25_state_out_car` | `int | None` | outside PM2.5 state; `0` observed (confirmed) |
+| `pm` | `pm` | `float | None` | PM2.5 value; `0` observed (confirmed) |
+| `pm25StateOutCar` | `pm25_state_out_car` | `float | None` | outside PM2.5 state; `0` observed (confirmed) |
+
+### Unparsed fields (raw only)
+
+These fields are present in the API response but not extracted into `HvacStatus` model attributes.
+They are accessible via the `raw` dict.
+
+| API field | Observed value | Notes |
+|---|---|---|
+| `lrThirdHeatState` | `0` | third-row left seat heat (unconfirmed) |
+| `lrThirdVentilationState` | `0` | third-row left seat ventilation (unconfirmed) |
+| `rrThirdHeatState` | `0` | third-row right seat heat (unconfirmed) |
+| `rrThirdVentilationState` | `0` | third-row right seat ventilation (unconfirmed) |
+| `refrigeratorTemp` | `"-1"` | refrigerator temperature (unconfirmed) |
+| `airTempLevel` | `0` | air temperature level code (unconfirmed) |
+| `airConditionTempRange` | `0` | A/C temperature range setting (unconfirmed) |
+| `frontAirSumPattern` | `0` | front air distribution pattern (unconfirmed) |
+| `temp` | `0` | unknown temperature field (unconfirmed) |
+| `firstWind` | `0` | fan speed level 1 (unconfirmed) |
+| `secondWind` | `0` | fan speed level 2 (unconfirmed) |
+| `firstWarm` | `0` | heating level 1 (unconfirmed) |
+| `secondWarm` | `0` | heating level 2 (unconfirmed) |
+| `timeChoice` | `1` | timer/duration selection (unconfirmed) |
 
 ---
 
@@ -243,6 +295,17 @@ Parser: `src/pybyd/_api/charging.py`
 | `fullMinute` | `full_minute` | `int | None` | -1 means not available (confirmed) |
 | `updateTime` | `update_time` | `int | None` | epoch seconds (confirmed) |
 
+### Unparsed fields (raw only)
+
+These fields are present in the API response but not extracted into `ChargingStatus` model attributes.
+They are accessible via the `raw` dict.
+
+| API field | Observed value | Notes |
+|---|---|---|
+| `vehicleTimeZone` | `"Europe/Rome"` | vehicle configured timezone (unconfirmed) |
+| `smartJourneyDto` | nested object | journey scheduling fields: `useVehicleTime`, `chargeWay`, `startDiscountPrice`, `endDiscountPrice`, `status`, etc. (unconfirmed) |
+| `smartChargeDto` | nested object | smart charge schedule fields: `startChargeTime`, `endChargeTime`, `chargeWay`, `exeTime`, `status`, etc. (unconfirmed) |
+
 ---
 
 ## GPS / location
@@ -263,6 +326,15 @@ Parser: `src/pybyd/_api/gps.py`
 | `direction` / `heading` / `course` | `direction` | `float | None` | degrees 0-360 (confirmed) |
 | `gpsTimeStamp` / `gpsTimestamp` / `gpsTime` / `time` / `uploadTime` | `gps_timestamp` | `int | None` | epoch seconds (confirmed) |
 | `requestSerial` | `request_serial` | `str | None` | poll serial token (confirmed) |
+
+### Unparsed fields (raw only)
+
+These fields are present in the API response but not extracted into `GpsInfo` model attributes.
+They are accessible via the `raw` dict.
+
+| API field | Observed value | Notes |
+|---|---|---|
+| `res` | `2` | response status code (unconfirmed) |
 
 ---
 
@@ -317,6 +389,27 @@ Parser: `src/pybyd/_api/_common.py`
 | `yunActiveTime` | `yun_active_time` | `int | None` | cloud activation timestamp in epoch milliseconds (confirmed) |
 | `empowerId` | `empower_id` | `int | None` | account-vehicle empower relationship id (confirmed) |
 | `rangeDetailList` | `range_detail_list` | `list[EmpowerRange]` | hierarchical permission scope tree (capability modules/functions) (confirmed) |
+
+### Unparsed fields (raw only)
+
+These fields are present in the API response but not extracted into `Vehicle` model attributes.
+They are accessible via the `raw` dict.
+
+| API field | Observed value | Notes |
+|---|---|---|
+| `bluetoothInfo` | `null` | Bluetooth pairing info (unconfirmed) |
+| `brandId` | `0` | internal brand identifier (unconfirmed) |
+| `cfPic` | nested object | contains `clrCode`, `flag`, `picDoorZipUrl`, `picMainUrl`, `picSetUrl`, `picTireUrl`; `picMainUrl`/`picSetUrl` used as fallback for top-level pic fields |
+| `cloudServiceStatue` | `""` | cloud service status (note: API typo "Statue") (unconfirmed) |
+| `crmModelId` | `""` | CRM model identifier (unconfirmed) |
+| `crmStyleId` | `""` | CRM style identifier (unconfirmed) |
+| `dealerRegionCode` | `""` | dealer region code (unconfirmed) |
+| `openCloudServiceStatue` | `false` | cloud service activation flag (unconfirmed) |
+| `resetPwdState` | `0` | password reset state (unconfirmed) |
+| `userManualUrl` | `""` | user manual URL (unconfirmed) |
+| `vehicleFunLearnInfo` | nested object | feature capability flags (e.g. `airAccuracy`, `batteryHeating`, `bookingCharge`, `otaUpgrade`, `trunkLearnInfo`, etc.); maps feature availability per vehicle (unconfirmed) |
+| `vehicleTimeZone` | `"Europe/Rome"` | vehicle configured timezone (unconfirmed) |
+| `vehicleType` | `""` | vehicle type code (unconfirmed) |
 
 ---
 
@@ -403,7 +496,7 @@ and live captures; value meanings are still partly unconfirmed):
 |---|---|---|---|
 | `controlState` | `control_state` | `ControlState` | 0=pending, 1=success, 2=failure (unconfirmed). If `res` is present instead, pyBYD maps `res==2` to success. |
 | `requestSerial` | `request_serial` | `str | None` | poll serial token (unconfirmed) |
-| `res` | (immediate) | `int` | 2 observed as success (unconfirmed) |
+| `res` | (immediate) | `int` | 2 observed as success (unconfirmed); mapped to `control_state` via `_normalize_shapes` |
 
 ### Control error codes observed
 
@@ -465,23 +558,3 @@ These reflect the enums currently implemented in `src/pybyd/models/realtime.py`.
 | `ControlState` | 0 | `PENDING` | unconfirmed | |
 | `ControlState` | 1 | `SUCCESS` | unconfirmed | |
 | `ControlState` | 2 | `FAILURE` | unconfirmed | |
-
----
-
-## Unparsed fields
-
-Some endpoints contain additional fields that pyBYD currently keeps only in `raw`.
-If you discover value meanings, add them here and consider mapping them into models.
-
-Realtime examples (not exhaustively maintained):
-
-| API field | Observed value | Notes |
-|---|---|---|
-| `rate` | `-9`, `0` | possibly charging rate/sentinel (unconfirmed) |
-| `lessOneMin` | `false` | possibly time-to-full flag (unconfirmed) |
-| `repairModeSwitch` | `"0"` | mode flag (unconfirmed) |
-| `powerBatteryConnection` | `-1`, `0` | battery connectivity indicator (unconfirmed) |
-| `gl` | `9788.8`, `0` | unknown metric in realtime payload (unconfirmed) |
-| `ins` | `int` | unknown (unconfirmed) |
-| `totalConsumptionEn` | `string` | unknown label/text field (unconfirmed) |
-| `energyConsumption` | `string` | unknown consumption field (unconfirmed) |
